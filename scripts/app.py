@@ -1,5 +1,4 @@
 import os
-import sqlite3
 from datetime import date
 from flask import Flask, abort, request
 from linebot import LineBotApi, WebhookHandler
@@ -7,14 +6,16 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage,
     QuickReply, QuickReplyButton, MessageAction,
-    TemplateSendMessage, ButtonsTemplate, PostbackAction, PostbackEvent,
-    DatetimePickerAction  # 追加：カレンダーUIを呼び出すアクション
+    PostbackAction, PostbackEvent,
+    DatetimePickerAction
 )
 from db_manager import DBManager
 from dotenv import load_dotenv
+
+# .env ファイルを読み込む（ローカル開発用）
 load_dotenv()
 
-# LINE Developersで取得したアクセストークンとチャンネルシークレットを設定
+# 環境変数からAPIキーを取得
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 
@@ -36,7 +37,6 @@ def callback():
     except InvalidSignatureError:
         abort(400)
     return 'OK'
-
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
@@ -66,7 +66,7 @@ def handle_message(event):
         if text == "支出を入力":
             user_states[user_id] = {"mode": "EXPENSE", "step": 1}
             expense_categories = db.get_categories("expense_categories", True)
-            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in expense_categories[:12]]
+            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in expense_categories]
             items.append(cancel_button)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【支出】\n何の支出ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
             return
@@ -74,18 +74,18 @@ def handle_message(event):
         elif text == "収入を入力":
             user_states[user_id] = {"mode": "INCOME", "step": 1}
             income_categories = db.get_categories("income_categories", True)
-            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in income_categories[:12]]
+            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in income_categories]
             items.append(cancel_button)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【収入】\n何の収入ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
             return
             
-        elif text == "直近のデータを取り消し":
+        elif text == "直近のデータを削除":
             transactions = db.get_recent_transactions(user_id, limit=5)
             if not transactions:
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text="直近のデータはありません。"))
                 return
             items = []
-            text_lines = ["【直近5件の履歴】\n取り消したいデータのボタンをタップしてください。\n"]
+            text_lines = ["【直近5件の履歴】\n消したいデータのボタンをタップしてください。\n"]
             for i, tx in enumerate(transactions):
                 tx_type, tx_id, d, cat, amount = tx
                 label = "出" if tx_type == "EXPENSE" else "入"
@@ -99,7 +99,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メニューからタップしてください。"))
             return
 
-    # 共通のプレフィックス
     prefix = "【支出】\n" if state["mode"] == "EXPENSE" else "【収入】\n"
     table_name = "expense_categories" if state["mode"] == "EXPENSE" else "income_categories"
 
@@ -111,37 +110,26 @@ def handle_message(event):
         if text in valid_categories:
             state["category"] = text
             state["step"] = 2
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}「{text}」ですね。\n次に、金額を「数字のみ」で入力してください。（例：1200）", quick_reply=QuickReply(items=[cancel_button])))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}「{text}」ですね。\n次に、金額を「数字のみ」で入力してください。\n（例：1200）", quick_reply=QuickReply(items=[cancel_button])))
             return
         else:
-            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in valid_categories[:12]]
+            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in valid_categories]
             items.append(cancel_button)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：「{text}」は登録されていない項目です。\n以下のボタンから選択してください。", quick_reply=QuickReply(items=items)))
             return
 
     # ==========================================
-    # ステップ2: 金額入力 ➡️ 日付選択へ
+    # ステップ2: 金額入力
     # ==========================================
     elif state["step"] == 2:
         if text.isdigit():
             state["amount"] = int(text)
             state["step"] = 3
-            
-            # 今日の日付を初期値に設定
             today_str = date.today().strftime("%Y-%m-%d")
-            
-            # DatetimePickerActionを使ったカレンダーボタン
             date_picker = QuickReplyButton(
-                action=DatetimePickerAction(
-                    label="📅 カレンダーから選ぶ",
-                    data="set_date",
-                    mode="date",
-                    initial=today_str
-                )
+                action=DatetimePickerAction(label="📅 カレンダーから選ぶ", data="set_date", mode="date", initial=today_str)
             )
-            # 早く入力したい人向けの「今日」ボタン
             today_btn = QuickReplyButton(action=MessageAction(label="今日", text="今日"))
-            
             items = [today_btn, date_picker, cancel_button]
             line_bot_api.reply_message(
                 event.reply_token, 
@@ -153,7 +141,7 @@ def handle_message(event):
             return
 
     # ==========================================
-    # ステップ3: 日付のバリデーション (テキストで「今日」と送られた場合)
+    # ステップ3: 日付のバリデーション
     # ==========================================
     elif state["step"] == 3:
         if text == "今日":
@@ -174,8 +162,6 @@ def handle_message(event):
     # ==========================================
     elif state["step"] == 4:
         memo = "" if text == "確定" else text
-        
-        # db_manager.py はすでに tx_date を受け取れるようになっているため、ここで渡す
         success, detail = db.insert_transaction(
             state["mode"], member_name, user_id, state["category"], state["amount"], memo, tx_date=state["date"]
         )
@@ -188,25 +174,18 @@ def handle_message(event):
         user_states.pop(user_id, None)
         return
 
-
-# ==========================================
-# PostbackEvent ハンドラ (日付選択と削除用)
-# ==========================================
 @handler.add(PostbackEvent)
 def handle_postback(event):
     user_id = event.source.user_id
     postback_data = event.postback.data
     
-    # 1. カレンダーUIから日付が選択された場合の処理
     if postback_data == "set_date":
         selected_date = event.postback.params['date']
         state = user_states.get(user_id)
-        
         if state and state.get("step") == 3:
             state["date"] = selected_date
             state["step"] = 4
             prefix = "【支出】\n" if state["mode"] == "EXPENSE" else "【収入】\n"
-            
             items = [
                 QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定")),
                 QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))
@@ -217,22 +196,21 @@ def handle_postback(event):
             )
         return
 
-    # 2. 直近データの削除処理
     data = postback_data.split(',')
     if data[0] == "delete":
         tx_type = data[1]
         tx_id = int(data[2])
         cat = data[3]
         amount = int(data[4])
-        
         success = db.delete_transaction(tx_type, tx_id)
         if success:
             label = "支出" if tx_type == "EXPENSE" else "収入"
             reply_text = f"【削除完了】\n過去の{label}データを取り消しました。\n項目: {cat}\n金額: {amount:,}円"
         else:
             reply_text = "削除処理中にエラーが発生しました。最初からやり直してください。"
-            
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 if __name__ == '__main__':
-    app.run(port=5000)
+    # クラウドサーバー(Render等)で動かすためのポート自動割り当て設定
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)

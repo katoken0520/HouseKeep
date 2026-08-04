@@ -1,5 +1,4 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 from datetime import datetime, date
 from db_manager import DBManager
@@ -10,33 +9,41 @@ st.title("💰 家計簿 PC管理システム")
 db = DBManager()
 
 def load_data(tx_type):
-    conn = sqlite3.connect(db.db_name)
-    if tx_type == "EXPENSE":
-        query = """
-            SELECT e.expense_id AS 'ID', e.date AS '日付', m.member_name AS '入力者',
-                   c.category_name AS '項目', e.amount AS '金額', e.memo AS '備考'
-            FROM expenses e
-            JOIN members m ON e.member_id = m.member_id
-            JOIN expense_categories c ON e.category_id = c.category_id
-            ORDER BY e.date DESC, e.expense_id DESC
-        """
-    else:
-        query = """
-            SELECT i.income_id AS 'ID', i.date AS '日付', m.member_name AS '入力者',
-                   c.category_name AS '項目', i.amount AS '金額', i.memo AS '備考'
-            FROM incomes i
-            JOIN members m ON i.member_id = m.member_id
-            JOIN income_categories c ON i.category_id = c.category_id
-            ORDER BY i.date DESC, i.income_id DESC
-        """
-    df = pd.read_sql_query(query, conn)
-    conn.close()
-    return df
+    # 【変更】sqlite3 ではなく、db_manager のクラウド接続を使用
+    conn = db._connect()
+    try:
+        if tx_type == "EXPENSE":
+            query = """
+                SELECT e.expense_id AS "ID", e.date AS "日付", m.member_name AS "入力者",
+                       c.category_name AS "項目", e.amount AS "金額", e.memo AS "備考"
+                FROM expenses e
+                JOIN members m ON e.member_id = m.member_id
+                JOIN expense_categories c ON e.category_id = c.category_id
+                ORDER BY e.date DESC, e.expense_id DESC
+            """
+        else:
+            query = """
+                SELECT i.income_id AS "ID", i.date AS "日付", m.member_name AS "入力者",
+                       c.category_name AS "項目", i.amount AS "金額", i.memo AS "備考"
+                FROM incomes i
+                JOIN members m ON i.member_id = m.member_id
+                JOIN income_categories c ON i.category_id = c.category_id
+                ORDER BY i.date DESC, i.income_id DESC
+            """
+        # PostgreSQLからデータを取得してPandasデータフレームに変換
+        with conn.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            cols = [desc[0] for desc in cursor.description]
+        df = pd.DataFrame(rows, columns=cols)
+        return df
+    finally:
+        conn.close()
 
 tab1, tab2, tab3 = st.tabs(["📊 データ一覧・修正・削除", "➕ データ手動追加", "⚙️ カテゴリーマスター管理"])
 
 # =========================================================================
-# タブ1: データ一覧・修正・削除 (期間絞り込み機能を追加)
+# タブ1: データ一覧・修正・削除
 # =========================================================================
 with tab1:
     st.header("データ明細の閲覧と編集")
@@ -50,7 +57,7 @@ with tab1:
     if df.empty:
         st.info("データがありません。")
     else:
-        # 日付文字列をdatetime型に変換
+        # 日付文字列・オブジェクトをdatetime型に変換
         df["日付"] = pd.to_datetime(df["日付"]).dt.date
         min_date = df["日付"].min()
         max_date = df["日付"].max()
@@ -59,7 +66,6 @@ with tab1:
         c1, c2, c3, c4 = st.columns(4)
         
         with c1:
-            # 期間での絞り込み（カレンダーUI）
             date_range = st.date_input("期間で絞り込み", value=(min_date, max_date), min_value=min_date, max_value=max_date)
         with c2:
             filter_member = st.multiselect("入力者で絞り込み", options=df["入力者"].unique())
@@ -70,7 +76,6 @@ with tab1:
             
         df_filtered = df.copy()
         
-        # フィルターの適用
         if isinstance(date_range, tuple):
             if len(date_range) == 2:
                 df_filtered = df_filtered[(df_filtered["日付"] >= date_range[0]) & (df_filtered["日付"] <= date_range[1])]
@@ -126,7 +131,7 @@ with tab1:
                         st.error(f"エラー: {msg}")
 
 # =========================================================================
-# タブ2: データ手動追加 (メンバー選択のバグ修正)
+# タブ2: データ手動追加
 # =========================================================================
 with tab2:
     st.header("データの新規追加")
@@ -136,7 +141,6 @@ with tab2:
         add_tx_type = "EXPENSE" if add_mode == "支出" else "INCOME"
         add_table_name = "expense_categories" if add_mode == "支出" else "income_categories"
         
-        # 【追加】日付選択（デフォルト値は実行した日）
         input_date = st.date_input("日付", value=date.today())
         
         members = db.get_all_members()
@@ -168,7 +172,6 @@ with tab2:
             elif not input_cat:
                 st.error("項目を選択してください。")
             else:
-                # tx_date引数に指定された日付を渡す
                 success, msg = db.insert_transaction(
                     add_tx_type, input_member, target_line_id, input_cat, input_amount, input_memo, tx_date=input_date
                 )
@@ -178,7 +181,7 @@ with tab2:
                     st.error(f"登録エラー: {msg}")
 
 # =========================================================================
-# タブ3: カテゴリーマスター管理 (削除機能を追加)
+# タブ3: カテゴリーマスター管理
 # =========================================================================
 with tab3:
     st.header("カテゴリーマスター（項目）の管理")
@@ -186,36 +189,38 @@ with tab3:
     cat_mode = st.radio("マスター種別", ["支出項目", "収入項目"], horizontal=True)
     target_table = "expense_categories" if cat_mode == "支出項目" else "income_categories"
     
-    # 現在の全マスターデータを取得
-    conn = sqlite3.connect(db.db_name)
-    cursor = conn.cursor()
-    cursor.execute(f"SELECT category_name, is_active FROM {target_table}")
-    cat_rows = cursor.fetchall()
-    conn.close()
+    # 【変更】sqlite3 ではなく、db_manager のクラウド接続を使用
+    conn = db._connect()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(f"SELECT category_name, is_active FROM {target_table} ORDER BY category_id ASC")
+            cat_rows = cursor.fetchall()
+    finally:
+        conn.close()
     
-    # 表示中（is_active == 1）の数をカウント
     active_count = sum(1 for _, is_active in cat_rows if is_active == 1)
     
-    # ステータス表示
     if active_count >= 12:
         st.warning(f"⚠️ 現在表示中の項目数: **{active_count} / 12 個** (LINE上限に達しています)")
     else:
         st.info(f"💡 現在表示中の項目数: **{active_count} / 12 個** (あと {12 - active_count} 個追加可能)")
     
-    # 4つの操作エリアを横並びに配置
     c_add, c_rename, c_vis, c_del = st.columns([1, 1.2, 1, 1.2])
     
-    # --- 1. 項目の追加 ---
     with c_add:
         st.subheader("➕ 項目の追加")
         new_cat_name = st.text_input("追加する項目名")
         if st.button("カテゴリーを追加", use_container_width=True):
             if new_cat_name.strip():
                 success, msg = db.add_category(target_table, new_cat_name.strip())
+                if success:
+                    st.success(f"「{new_cat_name}」を追加しました。")
+                    st.rerun()
+                else:
+                    st.error(msg)
             else:
                 st.warning("名前を入力してください。")
 
-    # --- 2. 項目の名称変更（NEW） ---
     with c_rename:
         st.subheader("✏️ 項目の名称変更")
         if cat_rows:
@@ -225,10 +230,14 @@ with tab3:
             
             if st.button("名前を変更する", use_container_width=True):
                 success, msg = db.rename_category(target_table, target_rename, renamed_name)
+                if success:
+                    st.success(f"「{target_rename}」を「{renamed_name}」に変更しました。")
+                    st.rerun()
+                else:
+                    st.error(msg)
         else:
             st.info("カテゴリーがありません。")
 
-    # --- 3. 表示・非表示切替 ---
     with c_vis:
         st.subheader("👁️ 表示切替")
         if cat_rows:
@@ -237,10 +246,14 @@ with tab3:
                 checked = st.checkbox(cat_name, value=(is_active == 1), key=f"chk_{target_table}_{cat_name}")
                 if checked != (is_active == 1):
                     success, msg = db.update_category_visibility(target_table, cat_name, checked)
+                    if success:
+                        st.success(f"「{cat_name}」の表示状態を更新しました。")
+                        st.rerun()
+                    else:
+                        st.error(msg)
         else:
             st.info("カテゴリーがありません。")
 
-    # --- 4. 完全削除 ---
     with c_del:
         st.subheader("🗑️ 完全削除")
         st.write("※明細で未使用の項目のみ")
@@ -251,3 +264,8 @@ with tab3:
             
             if st.button("⚠️ 選択項目を削除", type="primary", use_container_width=True):
                 success, msg = db.delete_category(target_table, delete_target)
+                if success:
+                    st.success(f"「{delete_target}」を削除しました。")
+                    st.rerun()
+                else:
+                    st.error(msg)
