@@ -16,9 +16,11 @@ load_dotenv()
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
 APP_PASSWORD = os.environ.get('APP_PASSWORD')
+ADMIN_APP_URL = os.environ.get('ADMIN_APP_URL')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
+
 app = Flask(__name__)
 db = DBManager()
 
@@ -133,7 +135,10 @@ def handle_message(event):
                 
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines)))
             return
-        
+        elif text == "管理者サイトのURLを表示":
+            reply_text = f"💻 PC版管理システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            return
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メニューからタップしてください。"))
             return

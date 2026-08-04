@@ -31,9 +31,9 @@ def check_password():
     if st.button("ログイン"):
         # 環境変数（.env または Streamlit Secrets）からパスワードを取得
         # ※ Streamlit Cloud では st.secrets からも参照できます
-        target_password = os.environ.get("APP_PASSWORD")
-        if not target_password and "APP_PASSWORD" in st.secrets:
-            target_password = st.secrets["APP_PASSWORD"]
+        target_password = os.environ.get("ADMIN_APP_PASSWORD")
+        if not target_password and "ADMIN_APP_PASSWORD" in st.secrets:
+            target_password = st.secrets["ADMIN_APP_PASSWORD"]
 
         # パスワードの判定
         if input_password == target_password:
