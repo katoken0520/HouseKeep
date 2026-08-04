@@ -6,26 +6,23 @@ from linebot.exceptions import InvalidSignatureError
 from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage,
     QuickReply, QuickReplyButton, MessageAction,
-    PostbackAction, PostbackEvent,
-    DatetimePickerAction
+    PostbackAction, PostbackEvent, DatetimePickerAction
 )
 from db_manager import DBManager
 from dotenv import load_dotenv
 
-# .env ファイルを読み込む（ローカル開発用）
 load_dotenv()
 
-# 環境変数からAPIキーを取得
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
+# 🌟 合言葉を取得（設定がない場合は 'secret' がデフォルトになります）
+APP_PASSWORD = os.environ.get('APP_PASSWORD', 'secret')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
-
 app = Flask(__name__)
 db = DBManager()
 
-# --- ユーザーの入力状態を一時的に記憶する辞書 ---
 user_states = {}
 
 @app.route('/callback', methods=['POST'])
@@ -38,13 +35,41 @@ def callback():
         abort(400)
     return 'OK'
 
+# 🌟 関所関数：ユーザーが未登録ならブロックする
+def check_user_registration(user_id, current_name, event, text_message=None):
+    member_id = db.get_and_sync_member(user_id, current_name)
+    
+    # 登録済みならTrueを返す
+    if member_id:
+        return True
+
+    # 未登録の場合：合言葉が送られてきたかチェック
+    if text_message and text_message == APP_PASSWORD:
+        db.register_member(user_id, current_name)
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"認証成功！🎉\n「{current_name}」さん、家計簿Botへようこそ！\nリッチメニューのボタンから操作を開始してください。")
+        )
+    else:
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="⛔ 【未認証ユーザー】\nこのBotを利用するには、管理者が設定した「合言葉（パスワード）」を送信して登録を行ってください。")
+        )
+    return False
+
+
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     text = event.message.text.strip()
     user_id = event.source.user_id
     profile = line_bot_api.get_profile(user_id)
-    member_name = profile.display_name
+    current_name = profile.display_name
 
+    # 🌟 ここで必ず関所を通す！未登録なら処理を中断
+    if not check_user_registration(user_id, current_name, event, text_message=text):
+        return
+
+    # --- 以下、既存のロジック（変更なし） ---
     confirm_button = QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定"))
     cancel_button = QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))
     
@@ -59,9 +84,6 @@ def handle_message(event):
 
     state = user_states.get(user_id, {"mode": None, "step": 0})
 
-    # ==========================================
-    # 初期状態 (メニュー選択)
-    # ==========================================
     if state["mode"] is None:
         if text == "支出を入力":
             user_states[user_id] = {"mode": "EXPENSE", "step": 1}
@@ -70,7 +92,6 @@ def handle_message(event):
             items.append(cancel_button)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【支出】\n何の支出ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
             return
-            
         elif text == "収入を入力":
             user_states[user_id] = {"mode": "INCOME", "step": 1}
             income_categories = db.get_categories("income_categories", True)
@@ -78,7 +99,6 @@ def handle_message(event):
             items.append(cancel_button)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【収入】\n何の収入ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
             return
-            
         elif text == "直近のデータを削除":
             transactions = db.get_recent_transactions(user_id, limit=5)
             if not transactions:
@@ -102,9 +122,6 @@ def handle_message(event):
     prefix = "【支出】\n" if state["mode"] == "EXPENSE" else "【収入】\n"
     table_name = "expense_categories" if state["mode"] == "EXPENSE" else "income_categories"
 
-    # ==========================================
-    # ステップ1: カテゴリーのバリデーション
-    # ==========================================
     if state["step"] == 1:
         valid_categories = db.get_categories(table_name, True)
         if text in valid_categories:
@@ -118,9 +135,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：「{text}」は登録されていない項目です。\n以下のボタンから選択してください。", quick_reply=QuickReply(items=items)))
             return
 
-    # ==========================================
-    # ステップ2: 金額入力
-    # ==========================================
     elif state["step"] == 2:
         if text.isdigit():
             state["amount"] = int(text)
@@ -140,9 +154,6 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：金額は「数字のみ」で入力してください。"))
             return
 
-    # ==========================================
-    # ステップ3: 日付のバリデーション
-    # ==========================================
     elif state["step"] == 3:
         if text == "今日":
             state["date"] = date.today().strftime("%Y-%m-%d")
@@ -157,13 +168,10 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}下部のボタンから日付を選択してください。"))
             return
 
-    # ==========================================
-    # ステップ4: 備考入力 ＆ 確定
-    # ==========================================
     elif state["step"] == 4:
         memo = "" if text == "確定" else text
         success, detail = db.insert_transaction(
-            state["mode"], member_name, user_id, state["category"], state["amount"], memo, tx_date=state["date"]
+            state["mode"], current_name, user_id, state["category"], state["amount"], memo, tx_date=state["date"]
         )
         if success:
             reply_text = f"【登録完了】\n日付: {state['date']}\n項目: {state['category']}\n金額: {state['amount']:,}円\n備考: {memo}"
@@ -177,6 +185,13 @@ def handle_message(event):
 @handler.add(PostbackEvent)
 def handle_postback(event):
     user_id = event.source.user_id
+    profile = line_bot_api.get_profile(user_id)
+    current_name = profile.display_name
+    
+    # 🌟 ボタン操作時も未登録ならブロック
+    if not check_user_registration(user_id, current_name, event):
+        return
+
     postback_data = event.postback.data
     
     if postback_data == "set_date":
@@ -211,6 +226,5 @@ def handle_postback(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 if __name__ == '__main__':
-    # クラウドサーバー(Render等)で動かすためのポート自動割り当て設定
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
