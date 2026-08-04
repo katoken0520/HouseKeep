@@ -1,10 +1,58 @@
+import os
 import streamlit as st
-import pandas as pd
-from datetime import datetime, date
 from db_manager import DBManager
+from dotenv import load_dotenv
 
-st.set_page_config(page_title="家計簿 PC管理システム", layout="wide")
-st.title("💰 家計簿 PC管理システム")
+# .envの読み込み（ローカル実行用）
+load_dotenv()
+
+# Streamlitのページ基本設定
+st.set_page_config(page_title="家計簿管理システム", layout="wide")
+
+# =========================================================================
+# 🔒 ログイン認証機能
+# =========================================================================
+def check_password():
+    """正しいパスワードが入力されているか検証し、未認証ならログイン画面を表示して処理を止める"""
+    
+    # 既に認証済みの場合は True を返して後続の処理を続行
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # ログイン画面の表示
+    st.title("🔒 家計簿管理システム - ログイン")
+    st.write("アクセスするには管理者用パスワードを入力してください。")
+
+    # パスワード入力フォーム
+    input_password = st.text_input("パスワード", type="password", key="password_input")
+    
+    if st.button("ログイン"):
+        # 環境変数（.env または Streamlit Secrets）からパスワードを取得
+        # ※ Streamlit Cloud では st.secrets からも参照できます
+        target_password = os.environ.get("APP_PASSWORD")
+        if not target_password and "APP_PASSWORD" in st.secrets:
+            target_password = st.secrets["APP_PASSWORD"]
+
+        # パスワードの判定
+        if input_password == target_password:
+            st.session_state["password_correct"] = True
+            st.rerun()  # 画面を再読み込みして本来の管理画面を表示
+        else:
+            st.error("パスワードが正しくありません。")
+
+    return False
+
+# 🌟 関所の実行：認証に成功していなければ、ここでプログラムの実行を停止（以下の描画を行わない）
+if not check_password():
+    st.stop()
+
+# =========================================================================
+# 📊 これより下が本来のメイン画面（認証成功時のみ実行される）
+# =========================================================================
+# （※ sidebar に「ログアウト」ボタンを置いておくと便利です）
+if st.sidebar.button("🔒 ログアウト"):
+    st.session_state["password_correct"] = False
+    st.rerun()
 
 db = DBManager()
 

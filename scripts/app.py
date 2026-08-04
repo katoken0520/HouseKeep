@@ -15,8 +15,7 @@ load_dotenv()
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
 LINE_CHANNEL_SECRET = os.environ.get('LINE_CHANNEL_SECRET')
-# 🌟 合言葉を取得（設定がない場合は 'secret' がデフォルトになります）
-APP_PASSWORD = os.environ.get('APP_PASSWORD', 'secret')
+APP_PASSWORD = os.environ.get('APP_PASSWORD')
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -115,6 +114,26 @@ def handle_message(event):
             items.append(cancel_button)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines), quick_reply=QuickReply(items=items)))
             return
+        elif text == "30日間の総括":
+            summary = db.get_monthly_summary(user_id)
+            if not summary:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="過去30日間の支出データはありません。"))
+                return
+            
+            total_amount = sum(row[1] for row in summary)
+            text_lines = [
+                "📊 【過去30日間の支出総括】",
+                f"💰 総額: {total_amount:,}円",
+                "----------------------",
+                "📂 項目別内訳:"
+            ]
+            for cat, amount in summary:
+                percentage = (amount / total_amount) * 100
+                text_lines.append(f"・{cat}: {amount:,}円 ({percentage:.1f}%)")
+                
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines)))
+            return
+        
         else:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メニューからタップしてください。"))
             return

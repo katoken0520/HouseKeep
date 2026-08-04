@@ -241,6 +241,25 @@ class DBManager:
         finally:
             conn.close()
 
+    def get_monthly_summary(self, line_user_id):
+        """過去30日間の総支出額と項目別の集計を取得する"""
+        query = """
+            SELECT c.category_name, SUM(e.amount) as total
+            FROM expenses e
+            JOIN expense_categories c ON e.category_id = c.category_id
+            JOIN members m ON e.member_id = m.member_id
+            WHERE m.line_user_id = %s AND e.date >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY c.category_name
+            ORDER BY total DESC
+        """
+        conn = self._connect()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (line_user_id,))
+                return cursor.fetchall()
+        finally:
+            conn.close()
+
     def delete_transaction(self, tx_type, tx_id):
         if tx_type not in ['EXPENSE', 'INCOME']:
             return False, "無効なタイプです"
