@@ -136,7 +136,7 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines)))
             return
         elif text == "管理者サイトのURLを表示":
-            reply_text = f"💻 PC版管理システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
+            reply_text = f"💻 管理者用システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             return
         else:
