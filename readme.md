@@ -13,7 +13,7 @@ LINE Official Account Manager: `https://manager.line.biz/`\
 Streamlit: `https://share.streamlit.io/`を使っている。GitHubと連携済み。ここのMyAppsから飛ぶと完全版の家計簿管理システムにアクセスできる。
 
 # 3. サーバーについて
-LINEから簡易的に登録、削除ができるようにするためのサーバー。出先でも登録できるようにサーバーを使用。
+Render: `https://dashboard.render.com/`を使用。LINEから簡易的に登録、削除ができるようにするためのサーバー。出先でも登録できるようにサーバーを使用。
 
 # 4. クラウドDBについて
 Supabase: `https://supabase.com/`というクラウドデータベースを使っている。ここにDBが格納される。無料。

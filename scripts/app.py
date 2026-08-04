@@ -99,7 +99,7 @@ def handle_message(event):
             items.append(cancel_button)
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【収入】\n何の収入ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
             return
-        elif text == "直近のデータを削除":
+        elif text == "直近のデータを取り消し":
             transactions = db.get_recent_transactions(user_id, limit=5)
             if not transactions:
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text="直近のデータはありません。"))
