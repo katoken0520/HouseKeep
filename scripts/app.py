@@ -118,20 +118,36 @@ def handle_message(event):
             return
         elif text == "30日間の総括":
             summary = db.get_monthly_summary(user_id)
-            if not summary:
+            total_shared, user_shared = db.get_monthly_shared_stats(user_id)
+            
+            if not summary and total_shared == 0:
                 line_bot_api.reply_message(event.reply_token, TextSendMessage(text="過去30日間の支出データはありません。"))
                 return
             
-            total_amount = sum(row[1] for row in summary)
+            total_amount = sum(row[1] for row in summary) if summary else 0
             text_lines = [
-                "📊 【過去30日間の支出総括】",
-                f"💰 総額: {total_amount:,}円",
+                "📊 【過去30日間のあなたの支出総括】",
+                f"💰 総支払額: {total_amount:,}円",
                 "----------------------",
                 "📂 項目別内訳:"
             ]
-            for cat, amount in summary:
-                percentage = (amount / total_amount) * 100
-                text_lines.append(f"・{cat}: {amount:,}円 ({percentage:.1f}%)")
+            
+            if summary:
+                for cat, amount in summary:
+                    percentage = (amount / total_amount) * 100
+                    text_lines.append(f"・{cat}: {amount:,}円 ({percentage:.1f}%)")
+            else:
+                text_lines.append("・支払記録はありません")
+                
+            text_lines.append("----------------------")
+            text_lines.append("👪 【共有会計の負担状況】")
+            
+            if total_shared > 0:
+                share_percentage = (user_shared / total_shared) * 100
+                text_lines.append(f"全体の共有支出: {total_shared:,}円")
+                text_lines.append(f"あなたの負担額: {user_shared:,}円 ({share_percentage:.1f}%)")
+            else:
+                text_lines.append("・共有支出の記録はありません")
                 
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines)))
             return
@@ -160,8 +176,21 @@ def handle_message(event):
             return
 
     elif state["step"] == 2:
-        if text.isdigit():
-            state["amount"] = int(text)
+        # 💡 全角・半角スペースを取り除いて解析しやすくする
+        input_text = text.replace(" ", "").replace(" ", "")
+        is_shared = 0
+
+        # 先頭の「共有」や「共」をチェック
+        if input_text.startswith("共有"):
+            is_shared = 1
+            input_text = input_text[2:] # 「共有」を取り除く
+        elif input_text.startswith("共"):
+            is_shared = 1
+            input_text = input_text[1:] # 「共」を取り除く
+
+        if input_text.isdigit():
+            state["amount"] = int(input_text)
+            state["is_shared"] = is_shared # 💡 判定結果をステートに保存
             state["step"] = 3
             today_str = date.today().strftime("%Y-%m-%d")
             date_picker = QuickReplyButton(
@@ -169,13 +198,16 @@ def handle_message(event):
             )
             today_btn = QuickReplyButton(action=MessageAction(label="今日", text="今日"))
             items = [today_btn, date_picker, cancel_button]
+            
+            # 確認メッセージに共有/個人を表示
+            shared_str = "👪 共有用" if is_shared == 1 else "👤 個人用"
             line_bot_api.reply_message(
                 event.reply_token, 
-                TextSendMessage(text=f"{prefix}金額: {state['amount']:,}円\n\nいつの記録ですか？", quick_reply=QuickReply(items=items))
+                TextSendMessage(text=f"{prefix}{shared_str} / 金額: {state['amount']:,}円\n\nいつの記録ですか？", quick_reply=QuickReply(items=items))
             )
             return
         else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：金額は「数字のみ」で入力してください。"))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：金額は「数字のみ」または「共(空白)数字」で入力してください。"))
             return
 
     elif state["step"] == 3:
@@ -194,11 +226,15 @@ def handle_message(event):
 
     elif state["step"] == 4:
         memo = "" if text == "確定" else text
+        is_shared = state.get("is_shared", 0) # 💡 ステートからフラグを取得（収入の時はデフォルト0になるので安全）
+
+        # 💡 引数に is_shared を追加
         success, detail = db.insert_transaction(
-            state["mode"], current_name, user_id, state["category"], state["amount"], memo, tx_date=state["date"]
+            state["mode"], current_name, user_id, state["category"], state["amount"], memo, tx_date=state["date"], is_shared=is_shared
         )
         if success:
-            reply_text = f"【登録完了】\n日付: {state['date']}\n項目: {state['category']}\n金額: {state['amount']:,}円\n備考: {memo}"
+            shared_str = "👪 共有用" if is_shared == 1 else "👤 個人用"
+            reply_text = f"【登録完了】\n区分: {shared_str}\n日付: {state['date']}\n項目: {state['category']}\n金額: {state['amount']:,}円\n備考: {memo}"
         else:
             reply_text = f"データベース登録中にエラーが発生しました。最初からやり直してください。\n原因: {detail}"
             

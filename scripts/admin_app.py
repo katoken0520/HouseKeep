@@ -5,53 +5,40 @@ import streamlit as st
 from db_manager import DBManager
 from dotenv import load_dotenv
 
-# .envの読み込み（ローカル実行用）
 load_dotenv()
 
-# Streamlitのページ基本設定
 st.set_page_config(page_title="家計簿管理システム", layout="wide")
 
 # =========================================================================
 # 🔒 ログイン認証機能
 # =========================================================================
 def check_password():
-    """正しいパスワードが入力されているか検証し、未認証ならログイン画面を表示して処理を止める"""
-    
-    # 既に認証済みの場合は True を返して後続の処理を続行
     if st.session_state.get("password_correct", False):
         return True
 
-    # ログイン画面の表示
     st.title("🔒 家計簿管理システム - ログイン")
     st.write("アクセスするには管理者用パスワードを入力してください。")
-
-    # パスワード入力フォーム
     input_password = st.text_input("パスワード", type="password", key="password_input")
     
     if st.button("ログイン"):
-        # 環境変数（.env または Streamlit Secrets）からパスワードを取得
-        # ※ Streamlit Cloud では st.secrets からも参照できます
         target_password = os.environ.get("ADMIN_APP_PASSWORD")
         if not target_password and "ADMIN_APP_PASSWORD" in st.secrets:
             target_password = st.secrets["ADMIN_APP_PASSWORD"]
 
-        # パスワードの判定
         if input_password == target_password:
             st.session_state["password_correct"] = True
-            st.rerun()  # 画面を再読み込みして本来の管理画面を表示
+            st.rerun()
         else:
             st.error("パスワードが正しくありません。")
 
     return False
 
-# 🌟 関所の実行：認証に成功していなければ、ここでプログラムの実行を停止（以下の描画を行わない）
 if not check_password():
     st.stop()
 
 # =========================================================================
-# 📊 これより下が本来のメイン画面（認証成功時のみ実行される）
+# 📊 メイン画面
 # =========================================================================
-# （※ sidebar に「ログアウト」ボタンを置いておくと便利です）
 if st.sidebar.button("🔒 ログアウト"):
     st.session_state["password_correct"] = False
     st.rerun()
@@ -59,13 +46,12 @@ if st.sidebar.button("🔒 ログアウト"):
 db = DBManager()
 
 def load_data(tx_type):
-    # 【変更】sqlite3 ではなく、db_manager のクラウド接続を使用
     conn = db._connect()
     try:
         if tx_type == "EXPENSE":
             query = """
                 SELECT e.expense_id AS "ID", e.date AS "日付", m.member_name AS "入力者",
-                       c.category_name AS "項目", e.amount AS "金額", e.memo AS "備考"
+                       e.is_shared AS "区分", c.category_name AS "項目", e.amount AS "金額", e.memo AS "備考"
                 FROM expenses e
                 JOIN members m ON e.member_id = m.member_id
                 JOIN expense_categories c ON e.category_id = c.category_id
@@ -74,18 +60,23 @@ def load_data(tx_type):
         else:
             query = """
                 SELECT i.income_id AS "ID", i.date AS "日付", m.member_name AS "入力者",
-                       c.category_name AS "項目", i.amount AS "金額", i.memo AS "備考"
+                       0 AS "区分", c.category_name AS "項目", i.amount AS "金額", i.memo AS "備考"
                 FROM incomes i
                 JOIN members m ON i.member_id = m.member_id
                 JOIN income_categories c ON i.category_id = c.category_id
                 ORDER BY i.date DESC, i.income_id DESC
             """
-        # PostgreSQLからデータを取得してPandasデータフレームに変換
         with conn.cursor() as cursor:
             cursor.execute(query)
             rows = cursor.fetchall()
             cols = [desc[0] for desc in cursor.description]
         df = pd.DataFrame(rows, columns=cols)
+        
+        if not df.empty:
+            if tx_type == "EXPENSE":
+                df["区分"] = df["区分"].map({1: "👪 共有", 0: "👤 個人"})
+            else:
+                df["区分"] = "-"
         return df
     finally:
         conn.close()
@@ -107,22 +98,23 @@ with tab1:
     if df.empty:
         st.info("データがありません。")
     else:
-        # 日付文字列・オブジェクトをdatetime型に変換
         df["日付"] = pd.to_datetime(df["日付"]).dt.date
         min_date = df["日付"].min()
         max_date = df["日付"].max()
 
         st.subheader("🔍 フィルター条件")
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         
         with c1:
-            date_range = st.date_input("期間で絞り込み", value=(min_date, max_date), min_value=min_date, max_value=max_date)
+            date_range = st.date_input("期間", value=(min_date, max_date), min_value=min_date, max_value=max_date)
         with c2:
-            filter_member = st.multiselect("入力者で絞り込み", options=df["入力者"].unique())
+            filter_shared = st.multiselect("区分", options=["👪 共有", "👤 個人"]) if tx_type == "EXPENSE" else None
         with c3:
-            filter_cat = st.multiselect("項目で絞り込み", options=df["項目"].unique())
+            filter_member = st.multiselect("入力者", options=df["入力者"].unique())
         with c4:
-            search_memo = st.text_input("備考欄のキーワード検索")
+            filter_cat = st.multiselect("項目", options=df["項目"].unique())
+        with c5:
+            search_memo = st.text_input("備考検索")
             
         df_filtered = df.copy()
         
@@ -132,6 +124,8 @@ with tab1:
             elif len(date_range) == 1:
                 df_filtered = df_filtered[df_filtered["日付"] == date_range[0]]
                 
+        if filter_shared and tx_type == "EXPENSE":
+            df_filtered = df_filtered[df_filtered["区分"].isin(filter_shared)]
         if filter_member:
             df_filtered = df_filtered[df_filtered["入力者"].isin(filter_member)]
         if filter_cat:
@@ -139,8 +133,11 @@ with tab1:
         if search_memo:
             df_filtered = df_filtered[df_filtered["備考"].str.contains(search_memo, na=False)]
             
-        st.subheader(f"データ一覧（全 {len(df_filtered)} 件）")
-        st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+        st.subheader(f"データ一覧（全 {len(df_filtered)} 件 / 合計: {df_filtered['金額'].sum():,} 円）")
+        
+        # カラムの並び順を見やすく調整
+        display_cols = ["ID", "日付", "区分", "入力者", "項目", "金額", "備考"]
+        st.dataframe(df_filtered[display_cols], use_container_width=True, hide_index=True)
         
         st.write("---")
         st.subheader("📝 選択したデータの修正・削除")
@@ -154,6 +151,12 @@ with tab1:
                 all_cats = db.get_categories(table_name, only_active=False)
                 default_cat_idx = all_cats.index(row["項目"]) if row["項目"] in all_cats else 0
                 
+                # 支出の時だけ区分の編集を表示
+                new_is_shared = 0
+                if tx_type == "EXPENSE":
+                    default_shared = 1 if row["区分"] == "👪 共有" else 0
+                    new_is_shared = st.radio("区分", options=[1, 0], format_func=lambda x: "👪 共有" if x == 1 else "👤 個人", index=0 if default_shared == 1 else 1, horizontal=True)
+                
                 new_cat = st.selectbox("項目", options=all_cats, index=default_cat_idx)
                 new_amount = st.number_input("金額", value=int(row["金額"]), step=100)
                 new_memo = st.text_input("備考", value=str(row["備考"] if pd.notna(row["備考"]) else ""))
@@ -165,7 +168,7 @@ with tab1:
                     submit_delete = st.form_submit_button("🗑️ このデータを削除する", use_container_width=True)
                     
                 if submit_update:
-                    success, msg = db.update_transaction(tx_type, selected_id, new_cat, new_amount, new_memo)
+                    success, msg = db.update_transaction(tx_type, selected_id, new_cat, new_amount, new_memo, is_shared=new_is_shared)
                     if success:
                         st.success("データを更新しました！")
                         st.rerun()
@@ -191,6 +194,11 @@ with tab2:
         add_tx_type = "EXPENSE" if add_mode == "支出" else "INCOME"
         add_table_name = "expense_categories" if add_mode == "支出" else "income_categories"
         
+        # 支出の時だけ区分を表示
+        add_is_shared = 0
+        if add_tx_type == "EXPENSE":
+            add_is_shared = st.radio("区分", options=[1, 0], format_func=lambda x: "👪 共有" if x == 1 else "👤 個人", horizontal=True)
+
         input_date = st.date_input("日付", value=date.today())
         
         members = db.get_all_members()
@@ -223,7 +231,7 @@ with tab2:
                 st.error("項目を選択してください。")
             else:
                 success, msg = db.insert_transaction(
-                    add_tx_type, input_member, target_line_id, input_cat, input_amount, input_memo, tx_date=input_date
+                    add_tx_type, input_member, target_line_id, input_cat, input_amount, input_memo, tx_date=input_date, is_shared=add_is_shared
                 )
                 if success:
                     st.success(f"【登録完了】 {input_date} / {input_cat} : {input_amount:,}円 を登録しました。")
@@ -231,7 +239,7 @@ with tab2:
                     st.error(f"登録エラー: {msg}")
 
 # =========================================================================
-# タブ3: カテゴリーマスター管理
+# タブ3: カテゴリーマスター管理 (変更なし)
 # =========================================================================
 with tab3:
     st.header("カテゴリーマスター（項目）の管理")
@@ -239,7 +247,6 @@ with tab3:
     cat_mode = st.radio("マスター種別", ["支出項目", "収入項目"], horizontal=True)
     target_table = "expense_categories" if cat_mode == "支出項目" else "income_categories"
     
-    # 【変更】sqlite3 ではなく、db_manager のクラウド接続を使用
     conn = db._connect()
     try:
         with conn.cursor() as cursor:
@@ -289,7 +296,7 @@ with tab3:
             st.info("カテゴリーがありません。")
 
     with c_vis:
-        st.subheader("👁️ 表示切替")
+        st.subheader("表示切替")
         if cat_rows:
             st.write("LINEでの表示/非表示")
             for cat_name, is_active in cat_rows:

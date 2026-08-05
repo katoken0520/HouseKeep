@@ -183,7 +183,7 @@ class DBManager:
     # =========================================================================
     # 3. トランザクション（明細データ）管理
     # =========================================================================
-    def insert_transaction(self, tx_type, member_name, line_user_id, category_name, amount, memo="", tx_date=None):
+    def insert_transaction(self, tx_type, member_name, line_user_id, category_name, amount, memo="", tx_date=None, is_shared=0):
         if tx_type not in ['EXPENSE', 'INCOME']:
             return False, "無効なトランザクションタイプです"
         conn = self._connect()
@@ -202,13 +202,20 @@ class DBManager:
                     return False, f"項目「{category_name}」がマスターに存在しません"
                 category_id = row[0]
                 
-                data_table = 'expenses' if tx_type == 'EXPENSE' else 'incomes'
                 target_date = tx_date if tx_date else date.today()
                 
-                cursor.execute(f"""
-                    INSERT INTO {data_table} (date, member_id, category_id, amount, memo)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (target_date, member_id, category_id, amount, memo))
+                # 💡 支出と収入でINSERT文を分岐（is_sharedは支出のみ）
+                if tx_type == 'EXPENSE':
+                    cursor.execute("""
+                        INSERT INTO expenses (date, member_id, category_id, amount, memo, is_shared)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (target_date, member_id, category_id, amount, memo, is_shared))
+                else:
+                    cursor.execute("""
+                        INSERT INTO incomes (date, member_id, category_id, amount, memo)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """, (target_date, member_id, category_id, amount, memo))
+                
                 conn.commit()
                 return True, "Success"
         except Exception as e:
@@ -238,6 +245,25 @@ class DBManager:
             with conn.cursor() as cursor:
                 cursor.execute(query, (line_user_id, line_user_id, limit))
                 return cursor.fetchall()
+        finally:
+            conn.close()
+
+    def get_monthly_shared_stats(self, line_user_id):
+        """過去30日間の全体の共有支出と、特定のユーザーの共有負担額を取得する"""
+        query = """
+            SELECT 
+                COALESCE(SUM(e.amount), 0) as total_shared,
+                COALESCE(SUM(CASE WHEN m.line_user_id = %s THEN e.amount ELSE 0 END), 0) as user_shared
+            FROM expenses e
+            JOIN members m ON e.member_id = m.member_id
+            WHERE e.is_shared = 1 AND e.date >= CURRENT_DATE - INTERVAL '30 days'
+        """
+        conn = self._connect()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (line_user_id,))
+                row = cursor.fetchone()
+                return row[0], row[1]
         finally:
             conn.close()
 
@@ -277,7 +303,7 @@ class DBManager:
         finally:
             conn.close()
 
-    def update_transaction(self, tx_type, tx_id, category_name, amount, memo):
+    def update_transaction(self, tx_type, tx_id, category_name, amount, memo, is_shared=0):
         if tx_type not in ['EXPENSE', 'INCOME']:
             return False, "無効なタイプです"
         table_name = 'expenses' if tx_type == 'EXPENSE' else 'incomes'
@@ -291,11 +317,20 @@ class DBManager:
                 if not row:
                     return False, f"項目「{category_name}」が存在しません"
                 category_id = row[0]
-                cursor.execute(f"""
-                    UPDATE {table_name} 
-                    SET category_id = %s, amount = %s, memo = %s
-                    WHERE {id_column} = %s
-                """, (category_id, amount, memo, tx_id))
+                
+                # 💡 支出の場合は is_shared も更新する
+                if tx_type == 'EXPENSE':
+                    cursor.execute(f"""
+                        UPDATE {table_name} 
+                        SET category_id = %s, amount = %s, memo = %s, is_shared = %s
+                        WHERE {id_column} = %s
+                    """, (category_id, amount, memo, is_shared, tx_id))
+                else:
+                    cursor.execute(f"""
+                        UPDATE {table_name} 
+                        SET category_id = %s, amount = %s, memo = %s
+                        WHERE {id_column} = %s
+                    """, (category_id, amount, memo, tx_id))
                 conn.commit()
                 return True, "Success"
         except Exception as e:
