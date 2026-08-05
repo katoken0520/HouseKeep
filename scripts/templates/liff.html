@@ -14,12 +14,7 @@
     .scrollable-list { max-height: 60vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
     .chart-container { position: relative; height: 220px; width: 100%; margin-bottom: 15px; }
     .help-btn { width: 32px; height: 32px; padding: 0; line-height: 1; border-color: #ced4da; color: #6c757d; }
-    
-    /* 💡 プレースホルダーの文字色を少し薄く設定 */
-    ::placeholder {
-      color: #adb5bd !important;
-      opacity: 0.6 !important;
-    }
+    ::placeholder { color: #adb5bd !important; opacity: 0.6 !important; }
   </style>
 </head>
 <body class="p-3">
@@ -146,7 +141,7 @@
           <p class="text-muted mb-3">金額や項目を入力して「登録」を押してください。「履歴」タブから直近のデータを削除・確認できます。</p>
           
           <p class="fw-bold mb-1">👪 共有用・個人用の違い</p>
-          <p class="text-muted mb-3">「共有用」で登録したデータは、全体の共有支出として別枠で集計され、「概要」タブのグラフで負担割合を確認できます。</p>
+          <p class="text-muted mb-0">「共有用」で登録したデータは、全体の共有支出として別枠で集計され、「概要」タブのグラフで負担割合を確認できます。</p>
         </div>
       </div>
     </div>
@@ -155,7 +150,7 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   
   <script>
-    const LIFF_ID = "2010989817-SOF5ZiXe"; // ⚠️ ご自身のLIFF IDに書き換えてください
+    const LIFF_ID = "2010989817-SOF5ZiXe";
     let userId = "";
     
     let pieChartInstance = null;
@@ -189,7 +184,6 @@
       });
     }
 
-    // 💡 登録処理（LIFFを閉じずに入力項目を初期化するように変更）
     function submitTransaction(type) {
       const isExp = type === 'EXPENSE';
       const amountInput = document.getElementById(isExp ? 'exp-amount' : 'inc-amount');
@@ -209,7 +203,6 @@
       }).then(res => res.json()).then(data => {
         if (data.status === 'success') {
           alert("登録しました！");
-          // 金額と備考をクリアして次の入力に備える
           amountInput.value = "";
           memoInput.value = "";
         } else {
@@ -335,7 +328,9 @@
           const userShared = data.user_shared || 0;
           const otherShared = totalShared - userShared;
           
-          document.getElementById('sum-shared-text').innerHTML = `あなた: <strong>${userShared.toLocaleString()}円</strong> / 全体: <strong>${totalShared.toLocaleString()}円</strong>`;
+          // 💡 計算したパーセンテージを算出し、テキスト部分に埋め込み！
+          const sharedPct = totalShared > 0 ? ((userShared / totalShared) * 100).toFixed(1) : "0.0";
+          document.getElementById('sum-shared-text').innerHTML = `あなた: <strong>${userShared.toLocaleString()}円 (${sharedPct}%)</strong> / 全体: <strong>${totalShared.toLocaleString()}円</strong>`;
 
           if(barChartInstance) barChartInstance.destroy();
           const ctxBar = document.getElementById('sharedBarChart').getContext('2d');
