@@ -186,10 +186,13 @@ def handle_message(event):
     """
 
     try:
+        print("aaaaaaaaaaaaaaaaa")
         response = model.generate_content(prompt)
+        print("bbbbbbbbbbbbbbb")
         json_text = response.text.strip()
+        print("cccccccccccccccc")
         ai_data = json.loads(json_text)
-
+        print("ddddddddddddd")
         if ai_data['type'] == "":
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"AIがあなたのメッセージから収支項目を判断します！（1日1500回まで）\n「昨日、スーパーで1000円」などと送信してみてください！"))
             return
