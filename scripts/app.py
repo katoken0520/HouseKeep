@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from flask import Flask, abort, request, render_template, jsonify
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
@@ -25,6 +25,8 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 app = Flask(__name__)
 db = DBManager()
 user_states = {}
+
+JST = timezone(timedelta(hours=+9), 'JST')
 
 # 💡 新しい公式ライブラリでの初期化
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
@@ -121,7 +123,7 @@ def handle_message(event):
         INCOME: {active_inc_cats}
         EXPENSE: {active_exp_cats}
         ---- today ----
-        {date.today().strftime("%Y-%m-%d")}
+        {datetime.now(JST).strftime("%Y-%m-%d")}
         """
         print(f"Prompt: {prompt}")
         response = client.models.generate_content(model='gemini-3.5-flash',   # これよりバージョンを落とすとどうやら動かない。
