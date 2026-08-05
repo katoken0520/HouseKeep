@@ -255,28 +255,23 @@ with tab3:
     finally:
         conn.close()
     
-    active_count = sum(1 for _, is_active in cat_rows if is_active == 1)
-    
-    if active_count >= 12:
-        st.warning(f"⚠️ 現在表示中の項目数: **{active_count} / 12 個** (LINE上限に達しています)")
-    else:
-        st.info(f"💡 現在表示中の項目数: **{active_count} / 12 個** (あと {12 - active_count} 個追加可能)")
-    
     c_add, c_rename, c_vis, c_del = st.columns([1, 1.2, 1, 1.2])
     
     with c_add:
         st.subheader("➕ 項目の追加")
-        new_cat_name = st.text_input("追加する項目名")
-        if st.button("カテゴリーを追加", use_container_width=True):
-            if new_cat_name.strip():
+        new_cat_name = st.text_input("新しい項目名", key=f"new_cat_{target_table}")
+        if st.button("➕ 追加", key=f"btn_add_{target_table}"):
+            if not new_cat_name.strip():
+                st.error("項目名を入力してください。")
+            elif new_cat_name == "その他":
+                st.error("「その他」はシステム予約語のため追加できません。")
+            else:
                 success, msg = db.add_category(target_table, new_cat_name.strip())
                 if success:
                     st.success(f"「{new_cat_name}」を追加しました。")
                     st.rerun()
                 else:
                     st.error(msg)
-            else:
-                st.warning("名前を入力してください。")
 
     with c_rename:
         st.subheader("✏️ 項目の名称変更")
@@ -286,12 +281,15 @@ with tab3:
             renamed_name = st.text_input("新しい項目名", value=target_rename, key="rename_input")
             
             if st.button("名前を変更する", use_container_width=True):
-                success, msg = db.rename_category(target_table, target_rename, renamed_name)
-                if success:
-                    st.success(f"「{target_rename}」を「{renamed_name}」に変更しました。")
-                    st.rerun()
+                if renamed_name == "その他":
+                    st.error("「その他」はシステム予約語のため追加できません。")
                 else:
-                    st.error(msg)
+                    success, msg = db.rename_category(target_table, target_rename, renamed_name)
+                    if success:
+                        st.success(f"「{target_rename}」を「{renamed_name}」に変更しました。")
+                        st.rerun()
+                    else:
+                        st.error(msg)
         else:
             st.info("カテゴリーがありません。")
 
@@ -312,17 +310,41 @@ with tab3:
             st.info("カテゴリーがありません。")
 
     with c_del:
-        st.subheader("🗑️ 完全削除")
-        st.write("※明細で未使用の項目のみ")
+        st.subheader("🗑️ 項目削除")
         
         if cat_rows:
-            all_cat_names = [row[0] for row in cat_rows]
-            delete_target = st.selectbox("削除する項目", options=all_cat_names, key="del_select")
+            # 「その他」自体は削除できないように選択肢から除外
+            all_cat_names = [row[0] for row in cat_rows if row[0] != "その他"]
             
-            if st.button("⚠️ 選択項目を削除", type="primary", use_container_width=True):
-                success, msg = db.delete_category(target_table, delete_target)
-                if success:
-                    st.success(f"「{delete_target}」を削除しました。")
-                    st.rerun()
+            if all_cat_names:
+                delete_target = st.selectbox("削除する項目", options=all_cat_names, key=f"del_select_{target_table}")
+                
+                # 現在のデータで使用されている件数を取得
+                tx_type = "EXPENSE" if target_table == "expense_categories" else "INCOME"
+                usage_count = db.check_category_usage(tx_type, delete_target)
+                
+                # 警告メッセージの表示
+                if usage_count > 0:
+                    st.warning(f"⚠️ 警告: 「{delete_target}」は現在 **{usage_count}件** の明細で使用されています。")
+                    st.write("削除すると、これらの明細の項目は自動的に**「その他」**に変更されます。")
+                    
+                    # ユーザーに強制削除の同意を求めるチェックボックス
+                    confirm_delete = st.checkbox("データが「その他」に移動することを了解して、本当に削除する", key=f"confirm_{target_table}_{delete_target}")
                 else:
-                    st.error(msg)
+                    st.info("この項目は現在どの明細にも使用されていません。安全に削除できます。")
+                    confirm_delete = True # 使用されていなければチェック不要で削除可能
+                
+                if st.button("🚨 項目を削除する", key=f"btn_del_{target_table}"):
+                    if confirm_delete:
+                        success, msg = db.delete_category_safely(tx_type, delete_target)
+                        if success:
+                            st.success(msg)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                    else:
+                        st.error("削除するには上のチェックボックスにチェックを入れてください。")
+            else:
+                st.info("削除できる項目がありません（「その他」以外の項目が必要です）。")
+        else:
+            st.info("カテゴリーがありません。")

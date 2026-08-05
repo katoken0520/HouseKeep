@@ -206,11 +206,11 @@ def send_monthly_report():
         elif last_total <= avg_total:
             diff = avg_total - last_total
             msg_lines.append(f"過去の平均 {avg_total:,}円 より {diff:,}円 の節約です✨")
-            msg_lines.append("（素晴らしいです！今月もこの調子でいきましょう！）")
+            msg_lines.append("今月もこの調子でいきましょう！")
         else:
             diff = last_total - avg_total
             msg_lines.append(f"過去の平均 {avg_total:,}円 より {diff:,}円 オーバーしました📈")
-            msg_lines.append("（いつもよりいいお買い物をしましたね！🛍️）")
+            msg_lines.append("いつもよりいいお買い物をしましたね！")
             
         msg_lines.append("")
         msg_lines.append("📂 多く使った項目トップ3:")
@@ -219,7 +219,8 @@ def send_monthly_report():
         for i, cat in enumerate(stats['top_categories'], 1):
             cat_avg = cat['past_avg']
             avg_str = f"平均: {cat_avg:,}円" if cat_avg > 0 else "過去データなし"
-            msg_lines.append(f"{i}. {cat['name']}: {cat['amount']:,}円（{avg_str}）")
+            msg_lines.append(f"{i}. {cat['name']}: {cat['amount']:,}円")
+            msg_lines.append(f"（{avg_str}）")
             
         try:
             line_bot_api.push_message(user_id, TextSendMessage(text="\n".join(msg_lines)))

@@ -155,28 +155,75 @@ class DBManager:
         finally:
             conn.close()
 
-    def delete_category(self, table_name, category_name):
-        if table_name not in ['expense_categories', 'income_categories']:
-            return False, "無効なテーブル名です"
-        data_table = 'expenses' if table_name == 'expense_categories' else 'incomes'
+    def delete_category_safely(self, tx_type, category_name):
+        """項目を安全に削除する。明細が存在する場合は『その他』に移行した上で削除する。"""
+        if tx_type not in ['EXPENSE', 'INCOME']:
+            return False, "無効なタイプです"
+            
+        table_name = 'expenses' if tx_type == 'EXPENSE' else 'incomes'
+        cat_table = 'expense_categories' if tx_type == 'EXPENSE' else 'income_categories'
+        id_column = 'expense_id' if tx_type == 'EXPENSE' else 'income_id'
+        
         conn = self._connect()
         try:
             with conn.cursor() as cursor:
-                cursor.execute(f"SELECT category_id FROM {table_name} WHERE category_name = %s", (category_name,))
+                # 1. 削除対象の category_id を取得
+                cursor.execute(f"SELECT category_id FROM {cat_table} WHERE category_name = %s", (category_name,))
                 row = cursor.fetchone()
                 if not row:
-                    return False, "指定されたカテゴリーが見つかりません"
-                category_id = row[0]
-                cursor.execute(f"SELECT COUNT(*) FROM {data_table} WHERE category_id = %s", (category_id,))
-                count = cursor.fetchone()[0]
-                if count > 0:
-                    return False, f"この項目は既に {count} 件の明細データで使用されているため削除できません。"
-                cursor.execute(f"DELETE FROM {table_name} WHERE category_id = %s", (category_id,))
+                    return False, f"項目「{category_name}」が見つかりません。"
+                target_id = row[0]
+                
+                # 2. この項目が実際に明細（支出/収入テーブル）で使われているかカウント
+                cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE category_id = %s", (target_id,))
+                usage_count = cursor.fetchone()[0]
+                
+                # 3. 使われている場合は「その他」カテゴリーのIDを確保（なければ作る）
+                if usage_count > 0:
+                    cursor.execute(f"SELECT category_id FROM {cat_table} WHERE category_name = 'その他'")
+                    other_row = cursor.fetchone()
+                    if other_row:
+                        other_id = other_row[0]
+                    else:
+                        # 『その他』がなければ新規作成（非表示状態にならないようis_active=1）
+                        cursor.execute(f"INSERT INTO {cat_table} (category_name, is_active) VALUES ('その他', 1) RETURNING category_id")
+                        other_id = cursor.fetchone()[0]
+                    
+                    # 明細のカテゴリーを『その他』にアップデート
+                    cursor.execute(f"UPDATE {table_name} SET category_id = %s WHERE category_id = %s", (other_id, target_id))
+                
+                # 4. 元のカテゴリーを削除
+                cursor.execute(f"DELETE FROM {cat_table} WHERE category_id = %s", (target_id,))
+                
                 conn.commit()
-                return True, "Success"
+                if usage_count > 0:
+                    return True, f"項目「{category_name}」を削除しました。（使用されていた {usage_count} 件の明細を「その他」に移動しました）"
+                else:
+                    return True, f"項目「{category_name}」を削除しました。"
         except Exception as e:
             conn.rollback()
-            return False, str(e)
+            return False, f"エラーが発生しました: {str(e)}"
+        finally:
+            conn.close()
+
+    def check_category_usage(self, tx_type, category_name):
+        """項目が現在何件の明細で使用されているかを確認する（警告表示用）"""
+        if tx_type not in ['EXPENSE', 'INCOME']:
+            return 0
+        table_name = 'expenses' if tx_type == 'EXPENSE' else 'incomes'
+        cat_table = 'expense_categories' if tx_type == 'EXPENSE' else 'income_categories'
+        
+        conn = self._connect()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {table_name} e
+                    JOIN {cat_table} c ON e.category_id = c.category_id
+                    WHERE c.category_name = %s
+                """, (category_name,))
+                return cursor.fetchone()[0]
+        except:
+            return 0
         finally:
             conn.close()
 
