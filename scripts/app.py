@@ -63,7 +63,7 @@ if GEMINI_API_KEY:
     
     # モデル作成時に指示文を渡す
     model = genai.GenerativeModel(
-        model_name='gemini-2.5-flash',
+        model_name='gemini-1.5-flash',
         # system_instruction=system_prompt
     )
 
