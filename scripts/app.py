@@ -61,15 +61,15 @@ def handle_message(event):
                 ai_data['category'], 
                 ai_data['amount'], 
                 ai_data['memo'], 
-                tx_date=date.today().strftime("%Y-%m-%d"), 
-                is_shared=ai_data['is_shared']
+                ai_data['date'], 
+                ai_data['is_shared']
             )
             if success:
                 reply_text = "🎯 データベースに正常に記録しました！"
             else:
                 reply_text = f"❌ データの保存に失敗しました。\n{detail}"
         else:
-            reply_text = "確認待ちのデータがありません。メニューからフォームを開いて入力してください📱"
+            reply_text = "確認待ちのデータがありません。"
             
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
@@ -83,40 +83,53 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="AIの初期設定が完了していません。"))
         return
 
-    # 💡 抽出ルールの作成
-    active_exp_cats = db.get_categories('expense_categories', only_active=True)
+    # 💡 抽出ルールの作成    
     system_prompt = f"""
     あなたは優秀な家計簿アシスタントです。ユーザーの入力テキストから家計簿データを抽出し、以下のJSONフォーマットのみを出力してください。余計な文章や装飾は一切不要です。
 
     【抽出ルール】
     - type: 支出なら "EXPENSE"、収入なら "INCOME"
-    - category: 以下のリストから最も意味が近いものを1つ選ぶこと。
-      {active_exp_cats}
+    - category: typeに対応するプロンプト内のリストから最も意味が近いものを1つ選んで文字列とすること。例えば次のように与えられます。
+      INCOME: ["給与", "手当", "その他"]
+      EXPENSE: ["食費", "日用品", "交際費", "その他"]
     - amount: 金額を数値（整数）のみで抽出。
-    - is_shared: 共有の支払い（「共」「共有」「二人で」など）なら 1、個人の支払いなら 0。指定がなければ 0。
-    - memo: 買った場所、決済方法、品物など。なければ空文字 ""。
+    - is_shared: 家族で共有されていると考えられる事柄なら 1、個人の支払いなら 0。どちらか分かりにくいときは 0。
+    - memo: 特筆すべきことがなければ空文字 ""。特殊ケースならそのことを短くまとめて文字列とする。
+    - date: 買った日付を文字列で書く。（例: 2026-08-06）
+
+    【入力例】
+    ---- text ----
+    昨日、スーパーで1000円。共有。
+    ---- category ----
+    INCOME: ["給与", "手当", "その他"]
+    EXPENSE: ["食費", "日用品", "交際費", "その他"]
+    ---- today ----
+    2026-08-06
 
     【出力JSON例】
-    {{"type": "EXPENSE", "category": "食費", "amount": 600, "is_shared": 0, "memo": "コンビニ弁当"}}
+    {{"type": "EXPENSE", "category": "食費", "amount": 1000, "is_shared": 1, "memo": "", "date": "2026-08-05"}}
     """
 
     try:
-        # 💡 新しいライブラリを使ったクリーンな呼び出し
-        response = client.models.generate_content(
-            model='gemini-3.5-flash',
-            contents=text, # ユーザーの入力テキスト
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt, # システムプロンプトを分離して指定
-            )
-        )
+        active_exp_cats = db.get_categories('expense_categories', only_active=True)
+        active_inc_cats = db.get_categories('income_categories', only_active=True)
+        prompt = f"""
+        ---- text ----
+        {text}
+        ---- category ----
+        INCOME: {active_inc_cats}
+        EXPENSE: {active_exp_cats}
+        ---- today ----
+        {date.today().strftime("%Y-%m-%d")}
+        """
+        response = client.models.generate_content(model='gemini-3.5-flash',   # これよりバージョンを落とすとどうやら動かない。
+                                                  contents=prompt, # ユーザーの入力テキスト
+                                                  config=types.GenerateContentConfig(system_instruction=system_prompt))
         
         json_text = response.text.strip().replace('```json', '').replace('```', '')
         ai_data = json.loads(json_text)
         
-        user_states[user_id] = {
-            "status": "pending_ai",
-            "data": ai_data
-        }
+        user_states[user_id] = {"status": "pending_ai", "data": ai_data}
         
         tx_label = "支出" if ai_data['type'] == 'EXPENSE' else "収入"
         shared_str = "👪 共有用" if ai_data['is_shared'] == 1 else "👤 個人用"
@@ -128,28 +141,19 @@ def handle_message(event):
             f"区分: {shared_str}\n"
             f"項目: {ai_data['category']}\n"
             f"金額: {ai_data['amount']:,}円\n"
+            f"日付: {ai_data['date']}\n"
             f"備考: {ai_data['memo'] if ai_data['memo'] else 'なし'}\n"
             f"----------------------\n"
             f"この内容で登録しますか？"
         )
         
-        quick_reply_items = [
-            QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定")),
-            QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))
-        ]
-        
-        line_bot_api.reply_message(
-            event.reply_token, 
-            TextSendMessage(text=confirm_text, quick_reply=QuickReply(items=quick_reply_items))
-        )
+        quick_reply_items = [QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定")), QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))]
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=confirm_text, quick_reply=QuickReply(items=quick_reply_items)))
 
     except Exception as e:
         print(f"AI Parsing Error: {e}")
         user_states.pop(user_id, None)
-        line_bot_api.reply_message(
-            event.reply_token, 
-            TextSendMessage(text="うまく読み取れませんでした💦\n下部のメニューから「入力フォーム」を開いて手動で登録してください📱")
-        )
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"うまく読み取れませんでした💦\n下部のメニューから「入力フォーム」を開いて手動で登録してください📱\n\nエラー: {e}"))
 
 # =========================================================================
 # 🌟 Render起床用 (cron-job.org) & LINE Webhook
