@@ -285,6 +285,11 @@ def handle_postback(event):
             reply_text = "削除処理中にエラーが発生しました。最初からやり直してください。"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
+# pingを送り続けることでrenderサーバーを寝かさない。cronjobを使用。
+@app.route('/')
+def index():
+    return 'Render is awake!'
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
