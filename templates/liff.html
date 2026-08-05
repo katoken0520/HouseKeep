@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>家計簿入力フォーム</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <style>
+    body { background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    .nav-pills .nav-link.active { background-color: #0b2545; }
+    .btn-primary { background-color: #0b2545; border-color: #0b2545; }
+  </style>
+</head>
+<body class="p-3">
+
+  <div id="loading" class="text-center my-5">
+    <div class="spinner-border text-primary" role="status"></div>
+    <p class="mt-2 text-muted">LINE認証中...</p>
+  </div>
+
+  <div id="main-content" style="display: none;">
+    <ul class="nav nav-pills nav-fill mb-3" id="pills-tab" role="tablist">
+      <li class="nav-item"><button class="nav-link active" id="tab-exp" data-bs-toggle="pill" data-bs-target="#content-exp">💸 支出</button></li>
+      <li class="nav-item"><button class="nav-link" id="tab-inc" data-bs-toggle="pill" data-bs-target="#content-inc">💰 収入</button></li>
+      <li class="nav-item"><button class="nav-link" id="tab-rec" data-bs-toggle="pill" data-bs-target="#content-rec" onclick="loadRecent()">📜 履歴/削除</button></li>
+      <li class="nav-item"><button class="nav-link" id="tab-sum" data-bs-toggle="pill" data-bs-target="#content-sum" onclick="loadSummary()">📊 30日概要</button></li>
+    </ul>
+
+    <div class="tab-content" id="pills-tabContent">
+      
+      <div class="tab-pane fade show active" id="content-exp">
+        <div class="card p-3 shadow-sm">
+          <div class="mb-3">
+            <label class="form-label font-weight-bold">区分</label>
+            <div class="btn-group w-100" role="group">
+              <input type="radio" class="btn-check" name="exp-shared" id="sh-0" value="0" checked>
+              <label class="btn btn-outline-secondary" for="sh-0">👤 個人用</label>
+              <input type="radio" class="btn-check" name="exp-shared" id="sh-1" value="1">
+              <label class="btn btn-outline-primary" for="sh-1">👪 共有用</label>
+            </div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">項目</label>
+            <select id="exp-category" class="form-select"></select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">金額 (円)</label>
+            <input type="number" id="exp-amount" class="form-control form-control-lg" placeholder="1000" inputmode="numeric">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">日付</label>
+            <input type="date" id="exp-date" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">備考</label>
+            <input type="text" id="exp-memo" class="form-control" placeholder="メモ（任意）">
+          </div>
+          <button class="btn btn-primary btn-lg w-100" onclick="submitTransaction('EXPENSE')">支出を登録する</button>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="content-inc">
+        <div class="card p-3 shadow-sm">
+          <div class="mb-3">
+            <label class="form-label">項目</label>
+            <select id="inc-category" class="form-select"></select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">金額 (円)</label>
+            <input type="number" id="inc-amount" class="form-control form-control-lg" placeholder="50000" inputmode="numeric">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">日付</label>
+            <input type="date" id="inc-date" class="form-control">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">備考</label>
+            <input type="text" id="inc-memo" class="form-control">
+          </div>
+          <button class="btn btn-success btn-lg w-100" onclick="submitTransaction('INCOME')">収入を登録する</button>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="content-rec">
+        <div class="card p-3 shadow-sm">
+          <h6>直近5件の履歴</h6>
+          <p class="text-muted small">削除したい項目の「削除」ボタンを押してください。</p>
+          <ul id="recent-list" class="list-group list-group-flush"></ul>
+        </div>
+      </div>
+
+      <div class="tab-pane fade" id="content-sum">
+        <div class="card p-3 shadow-sm">
+          <h5>過去30日間のあなたの支出</h5>
+          <h3 id="sum-total" class="text-primary fw-bold">0 円</h3>
+          <hr>
+          <h6>📂 項目別内訳</h6>
+          <ul id="sum-categories" class="list-group list-group-flush mb-3"></ul>
+          <hr>
+          <h6>👪 共有会計の状況</h6>
+          <div id="sum-shared-box" class="bg-light p-2 rounded"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script>
+    const LIFF_ID = "2001234567-AbCdEfGh";
+    let userId = "";
+
+    // 初期化
+    document.addEventListener("DOMContentLoaded", function() {
+      // 本日の日付をデフォルト設定
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('exp-date').value = today;
+      document.getElementById('inc-date').value = today;
+
+      liff.init({ liffId: LIFF_ID }).then(() => {
+        if (!liff.isLoggedIn()) {
+          liff.login();
+        } else {
+          liff.getProfile().then(profile => {
+            userId = profile.userId;
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('main-content').style.display = 'block';
+            loadCategories();
+          });
+        }
+      }).catch(err => alert("LIFF初期化エラー: " + err));
+    });
+
+    // カテゴリ読み込み
+    function loadCategories() {
+      fetch('/api/categories?type=expense_categories')
+        .then(res => res.json())
+        .then(data => {
+          const select = document.getElementById('exp-category');
+          select.innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+        });
+
+      fetch('/api/categories?type=income_categories')
+        .then(res => res.json())
+        .then(data => {
+          const select = document.getElementById('inc-category');
+          select.innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+        });
+    }
+
+    // データ登録
+    function submitTransaction(type) {
+      const isExp = type === 'EXPENSE';
+      const amount = document.getElementById(isExp ? 'exp-amount' : 'inc-amount').value;
+      const category = document.getElementById(isExp ? 'exp-category' : 'inc-category').value;
+      const date = document.getElementById(isExp ? 'exp-date' : 'inc-date').value;
+      const memo = document.getElementById(isExp ? 'exp-memo' : 'inc-memo').value;
+      const isShared = isExp ? document.querySelector('input[name="exp-shared"]:checked').value : 0;
+
+      if (!amount || amount <= 0) {
+        alert("金額を入力してください。");
+        return;
+      }
+
+      fetch('/api/transaction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: userId,
+          type: type,
+          category: category,
+          amount: amount,
+          date: date,
+          memo: memo,
+          is_shared: isShared
+        })
+      }).then(res => res.json()).then(data => {
+        if (data.status === 'success') {
+          alert("登録しました！");
+          liff.closeWindow(); // 登録完了後、自動でLIFF画面を閉じる
+        } else {
+          alert("エラー: " + data.message);
+        }
+      });
+    }
+
+    // 直近履歴の読み込み
+    function loadRecent() {
+      fetch(`/api/recent?user_id=${userId}`)
+        .then(res => res.json())
+        .then(data => {
+          const list = document.getElementById('recent-list');
+          list.innerHTML = data.transactions.map(tx => `
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <span class="badge ${tx.type === 'EXPENSE' ? 'bg-danger' : 'bg-success'}">${tx.type === 'EXPENSE' ? '出' : '入'}</span>
+                <strong>${tx.category}</strong>: ${tx.amount.toLocaleString()}円
+                <br><small class="text-muted">${tx.date}</small>
+              </div>
+              <button class="btn btn-sm btn-outline-danger" onclick="deleteTx('${tx.type}', ${tx.id})">削除</button>
+            </li>
+          `).join('');
+        });
+    }
+
+    // 削除処理
+    function deleteTx(type, id) {
+      if (!confirm("本当にこのデータを削除しますか？")) return;
+      fetch('/api/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: type, id: id })
+      }).then(res => res.json()).then(data => {
+        if (data.status === 'success') {
+          alert("削除しました。");
+          loadRecent();
+        }
+      });
+    }
+
+    // 30日サマリーの読み込み
+    function loadSummary() {
+      fetch(`/api/summary?user_id=${userId}`)
+        .then(res => res.json())
+        .then(data => {
+          document.getElementById('sum-total').innerText = data.total_amount.toLocaleString() + " 円";
+          
+          const catList = document.getElementById('sum-categories');
+          catList.innerHTML = data.categories.map(c => `
+            <li class="list-group-item d-flex justify-content-between">
+              <span>${c.name}</span>
+              <strong>${c.amount.toLocaleString()} 円</strong>
+            </li>
+          `).join('');
+
+          const sharedBox = document.getElementById('sum-shared-box');
+          if (data.total_shared > 0) {
+            const pct = ((data.user_shared / data.total_shared) * 100).toFixed(1);
+            sharedBox.innerHTML = `
+              <p class="mb-1">全体共有支出: <strong>${data.total_shared.toLocaleString()} 円</strong></p>
+              <p class="mb-0">あなたの負担額: <strong>${data.user_shared.toLocaleString()} 円 (${pct}%)</strong></p>
+            `;
+          } else {
+            sharedBox.innerHTML = `<p class="mb-0 text-muted">共有支出の記録はありません。</p>`;
+          }
+        });
+    }
+  </script>
+</body>
+</html>

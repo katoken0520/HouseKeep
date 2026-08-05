@@ -290,6 +290,101 @@ def handle_postback(event):
 def index():
     return 'Render is awake!'
 
+from flask import render_template, jsonify # render_template と jsonify を追加インポート
+
+# =========================================================================
+# 🌐 LIFF 画面用ルーティング＆API
+# =========================================================================
+
+# 1. LIFF 画面本体（HTML）の返却
+@app.route('/liff')
+def liff_page():
+    return render_template('liff.html')
+
+# 2. カテゴリー一覧の取得API
+@app.route('/api/categories', methods=['GET'])
+def api_get_categories():
+    tx_type = request.args.get('type', 'expense_categories')
+    categories = db.get_categories(tx_type, only_active=True)
+    return jsonify({"status": "success", "categories": categories})
+
+# 3. トランザクション（支出・収入）の追加API
+@app.route('/api/transaction', methods=['POST'])
+def api_add_transaction():
+    data = request.json
+    user_id = data.get('user_id')
+    tx_type = data.get('type') # 'EXPENSE' or 'INCOME'
+    category = data.get('category')
+    amount = int(data.get('amount', 0))
+    memo = data.get('memo', '')
+    tx_date = data.get('date')
+    is_shared = int(data.get('is_shared', 0))
+
+    # ユーザー名取得（またはDB検索）
+    # ※ 本来はLINE APIから名前を取るかDBのmembersから引く
+    conn = db._connect()
+    with conn.cursor() as cursor:
+        cursor.execute("SELECT member_name FROM members WHERE line_user_id = %s", (user_id,))
+        row = cursor.fetchone()
+        current_name = row[0] if row else "Guest"
+    conn.close()
+
+    success, detail = db.insert_transaction(
+        tx_type, current_name, user_id, category, amount, memo, tx_date=tx_date, is_shared=is_shared
+    )
+    if success:
+        return jsonify({"status": "success"})
+    else:
+        return jsonify({"status": "error", "message": detail}), 400
+
+# 4. 直近の履歴取得API
+@app.route('/api/recent', methods=['GET'])
+def api_get_recent():
+    user_id = request.args.get('user_id')
+    transactions = db.get_recent_transactions(user_id, limit=5)
+    # transactions: [(type, id, date, cat, amount), ...]
+    res = []
+    for tx in transactions:
+        res.append({
+            "type": tx[0],
+            "id": tx[1],
+            "date": tx[2],
+            "category": tx[3],
+            "amount": tx[4]
+        })
+    return jsonify({"status": "success", "transactions": res})
+
+# 5. 履歴削除API
+@app.route('/api/delete', methods=['POST'])
+def api_delete():
+    data = request.json
+    tx_type = data.get('type')
+    tx_id = data.get('id')
+    success, detail = db.delete_transaction(tx_type, tx_id)
+    if success:
+        return jsonify({"status": "success"})
+    else:
+        return jsonify({"status": "error", "message": detail}), 400
+
+# 6. 30日間サマリー取得API
+@app.route('/api/summary', methods=['GET'])
+def api_get_summary():
+    user_id = request.args.get('user_id')
+    summary = db.get_monthly_summary(user_id)
+    total_shared, user_shared = db.get_monthly_shared_stats(user_id)
+    
+    total_amount = sum(row[1] for row in summary) if summary else 0
+    categories = [{"name": row[0], "amount": row[1]} for row in summary] if summary else []
+    
+    return jsonify({
+        "status": "success",
+        "total_amount": total_amount,
+        "categories": categories,
+        "total_shared": total_shared,
+        "user_shared": user_shared
+    })
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
+
