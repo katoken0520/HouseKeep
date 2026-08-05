@@ -6,3 +6,4 @@ python-dotenv
 flask
 line-bot-sdk
 gunicorn
+google-generativeai

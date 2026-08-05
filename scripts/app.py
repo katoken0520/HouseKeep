@@ -3,10 +3,11 @@ from datetime import date
 from flask import Flask, abort, request, render_template, jsonify
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, MessageAction, QuickReplyButton, QuickReply
 from db_manager import DBManager
+import google.generativeai as genai
+import json
 from dotenv import load_dotenv
-
 load_dotenv()
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -17,8 +18,54 @@ ADMIN_APP_URL = os.environ.get('ADMIN_APP_URL')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
+user_states = {}
+
 app = Flask(__name__)
 db = DBManager()
+
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    
+    # DBから現在有効なカテゴリー一覧をあらかじめ取得してシステムプロンプトに埋め込む
+    active_exp_cats = db.get_categories('expense_categories', only_active=True)
+    
+    # 🌟 ここに概要やルールをすべて詰め込みます
+    system_prompt = f"""
+    あなたは家計簿アシスタントです。
+    ユーザーの入力テキストから毎度、家計簿項目を推測して指定のJSONフォーマットのみを出力してください。
+    余計な文章や解説、```json などのマークダウン装飾は一切不要です。
+    必ず純粋なJSON文字列だけを返してください。
+    
+    ただし、ユーザーの入力テキストが明らかに家計簿への記帳ではない場合は、以下のJSONフォーマットのみを出力してください。
+    {{"type": "", "category": "", "amount": 0, "is_shared": 0, "memo": ""}}
+
+    【抽出ルール】
+    - type: 支出なら "EXPENSE"、収入なら "INCOME"
+    - category: 有効な項目のリストが収入、支出それぞれに対し与えられるので、その中から最も適する物を一つ選び、valueは文字列とする。このカテゴリーは毎回変わる可能性がある。
+      （例: INCOME: ["給与", "配当・利子", "その他"], EXPENSE: ["食費", "日用品", "その他"])
+    - amount: 金額を数値（整数）のみで抽出。
+    - is_shared: ユーザーが家族であることを想定して、共有の支払いとすべきなら 1、個人の支払いなら 0とする。スーパーでの買い物などが共有の代表例である。曖昧ならば 0とする。
+    - memo: 日常的な買いもであれば空文字 ""とする。特殊ケースと思われる場合はここに備考として日本語の文字列を定める。
+    - date: 日付を文字列で書く。分からない場合は入力されたtodayと同じものを出力とする。（例: 2026-08-06）
+
+    【入力例】
+    【text】
+    昨日、旅行先でご飯、2000円
+    【active_category】
+    INCOME: ["給与", "配当・利子", "その他"], EXPENSE: ["食費", "日用品", "その他"]
+    【today】
+    2026-08-06
+
+    【出力例】
+    {{"type": "EXPENSE", "category": "食費", "amount": 2000, "is_shared": 1, "memo": "旅行先での食事", "date": "2026-08-05"}}
+    """
+    
+    # モデル作成時に指示文を渡す
+    model = genai.GenerativeModel(
+        model_name='gemini-1.5-flash',
+        system_instruction=system_prompt
+    )
 
 # =========================================================================
 # 🌟 Render起床用 (cron-job.org) & LINE Webhook
@@ -69,15 +116,96 @@ def handle_message(event):
     if not check_user_registration(user_id, current_name, event, text_message=text):
         return
 
-    # テキストでの登録機能を廃止し、LIFFへ誘導
+    # 管理者URLの呼び出しなどは既存のまま
     if text == "管理者サイトのURLを表示":
-        reply_text = f"管理者用システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
+        reply_text = f"💻 管理者用システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-    else:
-        line_bot_api.reply_message(
-            event.reply_token, 
-            TextSendMessage(text="家計簿の入力や履歴の確認は、下部のメニューから「入力フォーム」を開いて行ってください📱")
-        )
+        return
+
+    # 前のステップでのAIからの解答
+    state = user_states.pop(user_id, None)
+    if state and state.get("status") == "pending_ai":
+        if text == "確定":
+            ai_data = state["data"]
+            success, detail = db.insert_transaction(
+                ai_data['type'], 
+                current_name, 
+                user_id, 
+                ai_data['category'], 
+                ai_data['amount'], 
+                ai_data['memo'], 
+                ai_data["date"], 
+                ai_data['is_shared'])
+            if success:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"✨ データを保存しました！"))
+                return
+            else:
+                line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"データの保存に失敗しました。\n{detail}"))
+                return
+        elif text == "キャンセル":
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"データの保存をキャンセルしました。"))
+            return
+        else:
+            user_states[user_id] = {"status": "pending_ai", "data": ai_data}
+            
+            confirm_text = f"""
+            🤖 AI解析結果:
+            ----------------------
+            種別: {"支出" if ai_data['type'] == "EXPENSE" else "収入"}
+            区分: {"共有用" if ai_data['is_shared'] == 1 else "個人用"}
+            項目: {ai_data['category']}
+            金額: {ai_data['amount']:,}円
+            備考: {ai_data['memo'] if ai_data['memo'] else 'なし'}
+            ----------------------
+            この内容で家計簿に登録してもよろしいですか？"""
+            quick_reply_items = [QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定")), QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))]
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=confirm_text, quick_reply=QuickReply(items=quick_reply_items)))
+            return
+
+    # 💡 ここからAIによる自然言語解析
+    # DBから現在有効なカテゴリー一覧を取得してAIに教える
+    active_exp_cats = db.get_categories('expense_categories', only_active=True)
+    active_inc_cats = db.get_categories('income_categories', only_active=True)
+    
+    prompt = f"""
+    【text】
+    {text}
+    【active_category】
+    INCOME: {active_inc_cats}, EXPENSE: {active_exp_cats}
+    【today】
+    {date.today().strftime("%Y-%m-%d")}
+    """
+
+    try:
+        response = model.generate_content(text)
+        json_text = response.text.strip()
+        ai_data = json.loads(json_text)
+
+        if ai_data['type'] == "":
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"AIがあなたのメッセージから収支項目を判断します！（1日1500回まで）\n「昨日、スーパーで1000円」などと送信してみてください！"))
+            return
+        else:
+            user_states[user_id] = {"status": "pending_ai", "data": ai_data}
+
+            confirm_text = f"""
+            🤖 AI解析結果:
+            ----------------------
+            種別: {"支出" if ai_data['type'] == "EXPENSE" else "収入"}
+            区分: {"共有用" if ai_data['is_shared'] == 1 else "個人用"}
+            項目: {ai_data['category']}
+            金額: {ai_data['amount']:,}円
+            備考: {ai_data['memo'] if ai_data['memo'] else 'なし'}
+            ----------------------
+            この内容で家計簿に登録してもよろしいですか？"""
+            quick_reply_items = [QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定")), QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))]
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=confirm_text, quick_reply=QuickReply(items=quick_reply_items)))
+            return
+
+    except Exception as e:
+        print(f"AI Parsing Error: {e}")
+        # AIがうまく解析できなかった場合はLIFFへ誘導
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"うまく読み取れませんでした💦\n下部のメニューから「入力フォーム」を開いて手動で登録してください📱\n\nエラー: {e}"))
+        return
 
 # =========================================================================
 # 🌐 LIFF 画面用ルーティング＆API
