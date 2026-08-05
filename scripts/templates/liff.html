@@ -2,14 +2,18 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>家計簿入力フォーム</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     body { background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
     .nav-pills .nav-link.active { background-color: #0b2545; }
     .btn-primary { background-color: #0b2545; border-color: #0b2545; }
+    /* 💡 スマホで滑らかにスクロールさせる設定 */
+    .scrollable-list { max-height: 60vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .chart-container { position: relative; height: 250px; width: 100%; margin-bottom: 20px; }
   </style>
 </head>
 <body class="p-3">
@@ -23,8 +27,8 @@
     <ul class="nav nav-pills nav-fill mb-3" id="pills-tab" role="tablist">
       <li class="nav-item"><button class="nav-link active" id="tab-exp" data-bs-toggle="pill" data-bs-target="#content-exp">💸 支出</button></li>
       <li class="nav-item"><button class="nav-link" id="tab-inc" data-bs-toggle="pill" data-bs-target="#content-inc">💰 収入</button></li>
-      <li class="nav-item"><button class="nav-link" id="tab-rec" data-bs-toggle="pill" data-bs-target="#content-rec" onclick="loadRecent()">📜 履歴/削除</button></li>
-      <li class="nav-item"><button class="nav-link" id="tab-sum" data-bs-toggle="pill" data-bs-target="#content-sum" onclick="loadSummary()">📊 30日概要</button></li>
+      <li class="nav-item"><button class="nav-link" id="tab-rec" data-bs-toggle="pill" data-bs-target="#content-rec" onclick="loadRecent()">📜 履歴</button></li>
+      <li class="nav-item"><button class="nav-link" id="tab-sum" data-bs-toggle="pill" data-bs-target="#content-sum" onclick="loadSummary()">📊 概要</button></li>
     </ul>
 
     <div class="tab-content" id="pills-tabContent">
@@ -83,37 +87,45 @@
       </div>
 
       <div class="tab-pane fade" id="content-rec">
-        <div class="card p-3 shadow-sm">
-          <h6>直近5件の履歴</h6>
-          <p class="text-muted small">削除したい項目の「削除」ボタンを押してください。</p>
-          <ul id="recent-list" class="list-group list-group-flush"></ul>
+        <div class="card p-2 shadow-sm">
+          <h6 class="px-2 pt-2">過去の入力履歴</h6>
+          <div class="scrollable-list">
+            <ul id="recent-list" class="list-group list-group-flush"></ul>
+          </div>
         </div>
       </div>
 
       <div class="tab-pane fade" id="content-sum">
         <div class="card p-3 shadow-sm">
-          <h5>過去30日間のあなたの支出</h5>
-          <h3 id="sum-total" class="text-primary fw-bold">0 円</h3>
+          <h6 class="text-center">過去30日間の総支出</h6>
+          <h2 id="sum-total" class="text-center text-primary fw-bold mb-4">0 円</h2>
+          
+          <div class="chart-container">
+            <canvas id="categoryPieChart"></canvas>
+          </div>
+          
           <hr>
-          <h6>📂 項目別内訳</h6>
-          <ul id="sum-categories" class="list-group list-group-flush mb-3"></ul>
-          <hr>
-          <h6>👪 共有会計の状況</h6>
-          <div id="sum-shared-box" class="bg-light p-2 rounded"></div>
+          
+          <h6 class="mt-3">👪 共有会計の負担状況</h6>
+          <div id="sum-shared-text" class="text-center mb-2 small text-muted"></div>
+          <div style="height: 100px; width: 100%;">
+            <canvas id="sharedBarChart"></canvas>
+          </div>
         </div>
       </div>
 
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    const LIFF_ID = "2010989817-SOF5ZiXe";
+    const LIFF_ID = "2010989817-SOF5ZiXe"; // ⚠️ ご自身のLIFF IDに書き換えてください！
     let userId = "";
+    
+    // グラフオブジェクトを保持する変数（再描画時のチラつき防止用）
+    let pieChartInstance = null;
+    let barChartInstance = null;
 
-    // 初期化
     document.addEventListener("DOMContentLoaded", function() {
-      // 本日の日付をデフォルト設定
       const today = new Date().toISOString().split('T')[0];
       document.getElementById('exp-date').value = today;
       document.getElementById('inc-date').value = today;
@@ -132,24 +144,15 @@
       }).catch(err => alert("LIFF初期化エラー: " + err));
     });
 
-    // カテゴリ読み込み
     function loadCategories() {
-      fetch('/api/categories?type=expense_categories')
-        .then(res => res.json())
-        .then(data => {
-          const select = document.getElementById('exp-category');
-          select.innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
-        });
-
-      fetch('/api/categories?type=income_categories')
-        .then(res => res.json())
-        .then(data => {
-          const select = document.getElementById('inc-category');
-          select.innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
-        });
+      fetch('/api/categories?type=expense_categories').then(res => res.json()).then(data => {
+        document.getElementById('exp-category').innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+      });
+      fetch('/api/categories?type=income_categories').then(res => res.json()).then(data => {
+        document.getElementById('inc-category').innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+      });
     }
 
-    // データ登録
     function submitTransaction(type) {
       const isExp = type === 'EXPENSE';
       const amount = document.getElementById(isExp ? 'exp-amount' : 'inc-amount').value;
@@ -158,91 +161,118 @@
       const memo = document.getElementById(isExp ? 'exp-memo' : 'inc-memo').value;
       const isShared = isExp ? document.querySelector('input[name="exp-shared"]:checked').value : 0;
 
-      if (!amount || amount <= 0) {
-        alert("金額を入力してください。");
-        return;
-      }
+      if (!amount || amount <= 0) return alert("金額を入力してください。");
 
       fetch('/api/transaction', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          user_id: userId,
-          type: type,
-          category: category,
-          amount: amount,
-          date: date,
-          memo: memo,
-          is_shared: isShared
-        })
+        body: JSON.stringify({ user_id: userId, type: type, category: category, amount: amount, date: date, memo: memo, is_shared: isShared })
       }).then(res => res.json()).then(data => {
         if (data.status === 'success') {
           alert("登録しました！");
-          liff.closeWindow(); // 登録完了後、自動でLIFF画面を閉じる
+          liff.closeWindow();
         } else {
           alert("エラー: " + data.message);
         }
       });
     }
 
-    // 直近履歴の読み込み
+    // 💡 履歴読み込み（スクロールリスト生成）
     function loadRecent() {
       fetch(`/api/recent?user_id=${userId}`)
         .then(res => res.json())
         .then(data => {
           const list = document.getElementById('recent-list');
-          list.innerHTML = data.transactions.map(tx => `
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-              <div>
-                <span class="badge ${tx.type === 'EXPENSE' ? 'bg-danger' : 'bg-success'}">${tx.type === 'EXPENSE' ? '出' : '入'}</span>
-                <strong>${tx.category}</strong>: ${tx.amount.toLocaleString()}円
-                <br><small class="text-muted">${tx.date}</small>
+          list.innerHTML = data.transactions.map(tx => {
+            const isExp = tx.type === 'EXPENSE';
+            const typeBadge = isExp ? '<span class="badge bg-danger">出</span>' : '<span class="badge bg-success">入</span>';
+            const sharedBadge = (isExp && tx.is_shared === 1) ? '<span class="badge bg-primary rounded-pill">👪 共有</span>' : '<span class="badge bg-secondary rounded-pill">👤 個人</span>';
+            
+            return `
+            <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+              <div style="flex-grow: 1;">
+                <div class="d-flex justify-content-between mb-1">
+                  <small class="text-muted">${tx.date}</small>
+                  ${sharedBadge}
+                </div>
+                <div>
+                  ${typeBadge} <strong>${tx.category}</strong>: ${tx.amount.toLocaleString()}円
+                </div>
               </div>
-              <button class="btn btn-sm btn-outline-danger" onclick="deleteTx('${tx.type}', ${tx.id})">削除</button>
+              <button class="btn btn-sm btn-outline-danger ms-3" onclick="deleteTx('${tx.type}', ${tx.id})">削除</button>
             </li>
-          `).join('');
+            `;
+          }).join('');
         });
     }
 
-    // 削除処理
     function deleteTx(type, id) {
-      if (!confirm("本当にこのデータを削除しますか？")) return;
+      if (!confirm("データを削除しますか？")) return;
       fetch('/api/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: type, id: id })
       }).then(res => res.json()).then(data => {
-        if (data.status === 'success') {
-          alert("削除しました。");
-          loadRecent();
-        }
+        if (data.status === 'success') loadRecent();
       });
     }
 
-    // 30日サマリーの読み込み
+    // 💡 グラフ描画を含むサマリー読み込み
     function loadSummary() {
       fetch(`/api/summary?user_id=${userId}`)
         .then(res => res.json())
         .then(data => {
           document.getElementById('sum-total').innerText = data.total_amount.toLocaleString() + " 円";
           
-          const catList = document.getElementById('sum-categories');
-          catList.innerHTML = data.categories.map(c => `
-            <li class="list-group-item d-flex justify-content-between">
-              <span>${c.name}</span>
-              <strong>${c.amount.toLocaleString()} 円</strong>
-            </li>
-          `).join('');
+          // --- 1. 項目別 円グラフ ---
+          const catNames = data.categories.map(c => c.name);
+          const catAmounts = data.categories.map(c => c.amount);
+          
+          if(pieChartInstance) pieChartInstance.destroy(); // 古いグラフを破棄
+          const ctxPie = document.getElementById('categoryPieChart').getContext('2d');
+          pieChartInstance = new Chart(ctxPie, {
+            type: 'doughnut',
+            data: {
+              labels: catNames,
+              datasets: [{
+                data: catAmounts,
+                backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#C9CBCF', '#7BC225']
+              }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+          });
 
-          const sharedBox = document.getElementById('sum-shared-box');
-          if (data.total_shared > 0) {
-            const pct = ((data.user_shared / data.total_shared) * 100).toFixed(1);
-            sharedBox.innerHTML = `
-              <p class="mb-1">全体共有支出: <strong>${data.total_shared.toLocaleString()} 円</strong></p>
-              <p class="mb-0">あなたの負担額: <strong>${data.user_shared.toLocaleString()} 円 (${pct}%)</strong></p>
-            `;
-          } else {
-            sharedBox.innerHTML = `<p class="mb-0 text-muted">共有支出の記録はありません。</p>`;
+          // --- 2. 共有会計 横棒グラフ ---
+          const totalShared = data.total_shared || 0;
+          const userShared = data.user_shared || 0;
+          const otherShared = totalShared - userShared;
+          
+          document.getElementById('sum-shared-text').innerHTML = `全体: <strong>${totalShared.toLocaleString()}円</strong> / あなた: <strong>${userShared.toLocaleString()}円</strong>`;
+
+          if(barChartInstance) barChartInstance.destroy();
+          const ctxBar = document.getElementById('sharedBarChart').getContext('2d');
+          
+          if(totalShared > 0) {
+            barChartInstance = new Chart(ctxBar, {
+              type: 'bar',
+              data: {
+                labels: ['負担割合'],
+                datasets: [
+                  { label: 'あなたの負担', data: [userShared], backgroundColor: '#36A2EB' },
+                  { label: 'その他', data: [otherShared], backgroundColor: '#E0E0E0' }
+                ]
+              },
+              options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y', // 横棒グラフにする
+                scales: {
+                  x: { stacked: true, max: totalShared, display: false },
+                  y: { stacked: true, display: false }
+                },
+                plugins: { legend: { display: false } }
+              }
+            });
           }
         });
     }

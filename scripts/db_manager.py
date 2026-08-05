@@ -248,6 +248,31 @@ class DBManager:
         finally:
             conn.close()
 
+    def get_liff_transactions(self, line_user_id, limit=100):
+        """LIFF用に、ユーザーの過去の履歴を新しい順に取得（共有/個人フラグ付き）"""
+        query = """
+            SELECT 'EXPENSE' as type, e.expense_id as id, TO_CHAR(e.date, 'YYYY-MM-DD') as date, c.category_name, e.amount, e.is_shared
+            FROM expenses e
+            JOIN expense_categories c ON e.category_id = c.category_id
+            JOIN members m ON e.member_id = m.member_id
+            WHERE m.line_user_id = %s
+            UNION ALL
+            SELECT 'INCOME' as type, i.income_id as id, TO_CHAR(i.date, 'YYYY-MM-DD') as date, c.category_name, i.amount, 0 as is_shared
+            FROM incomes i
+            JOIN income_categories c ON i.category_id = c.category_id
+            JOIN members m ON i.member_id = m.member_id
+            WHERE m.line_user_id = %s
+            ORDER BY date DESC, id DESC
+            LIMIT %s
+        """
+        conn = self._connect()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query, (line_user_id, line_user_id, limit))
+                return cursor.fetchall()
+        finally:
+            conn.close()
+
     def get_monthly_shared_stats(self, line_user_id):
         """過去30日間の全体の共有支出と、特定のユーザーの共有負担額を取得する"""
         query = """

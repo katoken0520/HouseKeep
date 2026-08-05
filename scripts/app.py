@@ -67,181 +67,195 @@ def handle_message(event):
     profile = line_bot_api.get_profile(user_id)
     current_name = profile.display_name
 
-    # 🌟 ここで必ず関所を通す！未登録なら処理を中断
+    # ここで必ずパスワード登録済みか確認！未登録なら処理を中断
     if not check_user_registration(user_id, current_name, event, text_message=text):
         return
 
-    # --- 以下、既存のロジック（変更なし） ---
-    confirm_button = QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定"))
-    cancel_button = QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))
+    # --- 文字列への対応 ---
+    if text == "ヘルプ":
+        pass
+        return
+
+    elif text == "管理者サイトのURLを表示":
+        reply_text = f"管理者用システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return
+
+    else:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メニューからタップしてください。"))
+        return
+
     
-    if text == "キャンセル":
-        if user_id in user_states:
-            user_states.pop(user_id, None)
-            reply_text = "入力をキャンセルしました。データは登録されていません。"
-        else:
-            reply_text = "現在、入力中のセッションはありません。"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return
+    # confirm_button = QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定"))
+    # cancel_button = QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))
+    
+    # if text == "キャンセル":
+    #     if user_id in user_states:
+    #         user_states.pop(user_id, None)
+    #         reply_text = "入力をキャンセルしました。データは登録されていません。"
+    #     else:
+    #         reply_text = "現在、入力中のセッションはありません。"
+    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    #     return
 
-    state = user_states.get(user_id, {"mode": None, "step": 0})
+    # state = user_states.get(user_id, {"mode": None, "step": 0})
 
-    if state["mode"] is None:
-        if text == "支出を入力":
-            user_states[user_id] = {"mode": "EXPENSE", "step": 1}
-            expense_categories = db.get_categories("expense_categories", True)
-            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in expense_categories]
-            items.append(cancel_button)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【支出】\n何の支出ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
-            return
-        elif text == "収入を入力":
-            user_states[user_id] = {"mode": "INCOME", "step": 1}
-            income_categories = db.get_categories("income_categories", True)
-            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in income_categories]
-            items.append(cancel_button)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【収入】\n何の収入ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
-            return
-        elif text == "直近のデータを取り消し":
-            transactions = db.get_recent_transactions(user_id, limit=5)
-            if not transactions:
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="直近のデータはありません。"))
-                return
-            items = []
-            text_lines = ["【直近5件の履歴】\n消したいデータのボタンをタップしてください。\n"]
-            for i, tx in enumerate(transactions):
-                tx_type, tx_id, d, cat, amount = tx
-                label = "出" if tx_type == "EXPENSE" else "入"
-                text_lines.append(f"{i+1}. [{label}] {cat} {amount:,}円 ({d[-5:]})")
-                postback_data = f"delete,{tx_type},{tx_id},{cat},{amount}"
-                items.append(QuickReplyButton(action=PostbackAction(label=f"{i+1}番を削除", data=postback_data)))
-            items.append(cancel_button)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines), quick_reply=QuickReply(items=items)))
-            return
-        elif text == "30日間の総括":
-            summary = db.get_monthly_summary(user_id)
-            total_shared, user_shared = db.get_monthly_shared_stats(user_id)
+    # if state["mode"] is None:
+    #     if text == "支出を入力":
+    #         user_states[user_id] = {"mode": "EXPENSE", "step": 1}
+    #         expense_categories = db.get_categories("expense_categories", True)
+    #         items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in expense_categories]
+    #         items.append(cancel_button)
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【支出】\n何の支出ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
+    #         return
+    #     elif text == "収入を入力":
+    #         user_states[user_id] = {"mode": "INCOME", "step": 1}
+    #         income_categories = db.get_categories("income_categories", True)
+    #         items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in income_categories]
+    #         items.append(cancel_button)
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="【収入】\n何の収入ですか？項目を選んでください。", quick_reply=QuickReply(items=items)))
+    #         return
+    #     elif text == "直近のデータを取り消し":
+    #         transactions = db.get_recent_transactions(user_id, limit=5)
+    #         if not transactions:
+    #             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="直近のデータはありません。"))
+    #             return
+    #         items = []
+    #         text_lines = ["【直近5件の履歴】\n消したいデータのボタンをタップしてください。\n"]
+    #         for i, tx in enumerate(transactions):
+    #             tx_type, tx_id, d, cat, amount = tx
+    #             label = "出" if tx_type == "EXPENSE" else "入"
+    #             text_lines.append(f"{i+1}. [{label}] {cat} {amount:,}円 ({d[-5:]})")
+    #             postback_data = f"delete,{tx_type},{tx_id},{cat},{amount}"
+    #             items.append(QuickReplyButton(action=PostbackAction(label=f"{i+1}番を削除", data=postback_data)))
+    #         items.append(cancel_button)
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines), quick_reply=QuickReply(items=items)))
+    #         return
+    #     elif text == "30日間の総括":
+    #         summary = db.get_monthly_summary(user_id)
+    #         total_shared, user_shared = db.get_monthly_shared_stats(user_id)
             
-            if not summary and total_shared == 0:
-                line_bot_api.reply_message(event.reply_token, TextSendMessage(text="過去30日間の支出データはありません。"))
-                return
+    #         if not summary and total_shared == 0:
+    #             line_bot_api.reply_message(event.reply_token, TextSendMessage(text="過去30日間の支出データはありません。"))
+    #             return
             
-            total_amount = sum(row[1] for row in summary) if summary else 0
-            text_lines = [
-                "📊 【過去30日間のあなたの支出総括】",
-                f"💰 総支払額: {total_amount:,}円",
-                "----------------------",
-                "📂 項目別内訳:"
-            ]
+    #         total_amount = sum(row[1] for row in summary) if summary else 0
+    #         text_lines = [
+    #             "📊 【過去30日間のあなたの支出総括】",
+    #             f"💰 総支払額: {total_amount:,}円",
+    #             "----------------------",
+    #             "📂 項目別内訳:"
+    #         ]
             
-            if summary:
-                for cat, amount in summary:
-                    percentage = (amount / total_amount) * 100
-                    text_lines.append(f"・{cat}: {amount:,}円 ({percentage:.1f}%)")
-            else:
-                text_lines.append("・支払記録はありません")
+    #         if summary:
+    #             for cat, amount in summary:
+    #                 percentage = (amount / total_amount) * 100
+    #                 text_lines.append(f"・{cat}: {amount:,}円 ({percentage:.1f}%)")
+    #         else:
+    #             text_lines.append("・支払記録はありません")
                 
-            text_lines.append("----------------------")
-            text_lines.append("👪 【共有会計の負担状況】")
+    #         text_lines.append("----------------------")
+    #         text_lines.append("👪 【共有会計の負担状況】")
             
-            if total_shared > 0:
-                share_percentage = (user_shared / total_shared) * 100
-                text_lines.append(f"全体の共有支出: {total_shared:,}円")
-                text_lines.append(f"あなたの負担額: {user_shared:,}円 ({share_percentage:.1f}%)")
-            else:
-                text_lines.append("・共有支出の記録はありません")
+    #         if total_shared > 0:
+    #             share_percentage = (user_shared / total_shared) * 100
+    #             text_lines.append(f"全体の共有支出: {total_shared:,}円")
+    #             text_lines.append(f"あなたの負担額: {user_shared:,}円 ({share_percentage:.1f}%)")
+    #         else:
+    #             text_lines.append("・共有支出の記録はありません")
                 
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines)))
-            return
-        elif text == "管理者サイトのURLを表示":
-            reply_text = f"💻 管理者用システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-            return
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メニューからタップしてください。"))
-            return
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="\n".join(text_lines)))
+    #         return
+    #     elif text == "管理者サイトのURLを表示":
+    #         reply_text = f"💻 管理者用システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    #         return
+    #     else:
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="メニューからタップしてください。"))
+    #         return
 
-    prefix = "【支出】\n" if state["mode"] == "EXPENSE" else "【収入】\n"
-    table_name = "expense_categories" if state["mode"] == "EXPENSE" else "income_categories"
+    # prefix = "【支出】\n" if state["mode"] == "EXPENSE" else "【収入】\n"
+    # table_name = "expense_categories" if state["mode"] == "EXPENSE" else "income_categories"
 
-    if state["step"] == 1:
-        valid_categories = db.get_categories(table_name, True)
-        if text in valid_categories:
-            state["category"] = text
-            state["step"] = 2
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}「{text}」ですね。\n次に、金額を「数字のみ」で入力してください。\n（例：1200）", quick_reply=QuickReply(items=[cancel_button])))
-            return
-        else:
-            items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in valid_categories]
-            items.append(cancel_button)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：「{text}」は登録されていない項目です。\n以下のボタンから選択してください。", quick_reply=QuickReply(items=items)))
-            return
+    # if state["step"] == 1:
+    #     valid_categories = db.get_categories(table_name, True)
+    #     if text in valid_categories:
+    #         state["category"] = text
+    #         state["step"] = 2
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}「{text}」ですね。\n次に、金額を「数字のみ」で入力してください。\n（例：1200）", quick_reply=QuickReply(items=[cancel_button])))
+    #         return
+    #     else:
+    #         items = [QuickReplyButton(action=MessageAction(label=cat, text=cat)) for cat in valid_categories]
+    #         items.append(cancel_button)
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：「{text}」は登録されていない項目です。\n以下のボタンから選択してください。", quick_reply=QuickReply(items=items)))
+    #         return
 
-    elif state["step"] == 2:
-        # 💡 全角・半角スペースを取り除いて解析しやすくする
-        input_text = text.replace(" ", "").replace(" ", "")
-        is_shared = 0
+    # elif state["step"] == 2:
+    #     # 💡 全角・半角スペースを取り除いて解析しやすくする
+    #     input_text = text.replace(" ", "").replace(" ", "")
+    #     is_shared = 0
 
-        # 先頭の「共有」や「共」をチェック
-        if input_text.startswith("共有"):
-            is_shared = 1
-            input_text = input_text[2:] # 「共有」を取り除く
-        elif input_text.startswith("共"):
-            is_shared = 1
-            input_text = input_text[1:] # 「共」を取り除く
+    #     # 先頭の「共有」や「共」をチェック
+    #     if input_text.startswith("共有"):
+    #         is_shared = 1
+    #         input_text = input_text[2:] # 「共有」を取り除く
+    #     elif input_text.startswith("共"):
+    #         is_shared = 1
+    #         input_text = input_text[1:] # 「共」を取り除く
 
-        if input_text.isdigit():
-            state["amount"] = int(input_text)
-            state["is_shared"] = is_shared # 💡 判定結果をステートに保存
-            state["step"] = 3
-            today_str = date.today().strftime("%Y-%m-%d")
-            date_picker = QuickReplyButton(
-                action=DatetimePickerAction(label="📅 カレンダーから選ぶ", data="set_date", mode="date", initial=today_str)
-            )
-            today_btn = QuickReplyButton(action=MessageAction(label="今日", text="今日"))
-            items = [today_btn, date_picker, cancel_button]
+    #     if input_text.isdigit():
+    #         state["amount"] = int(input_text)
+    #         state["is_shared"] = is_shared # 💡 判定結果をステートに保存
+    #         state["step"] = 3
+    #         today_str = date.today().strftime("%Y-%m-%d")
+    #         date_picker = QuickReplyButton(
+    #             action=DatetimePickerAction(label="📅 カレンダーから選ぶ", data="set_date", mode="date", initial=today_str)
+    #         )
+    #         today_btn = QuickReplyButton(action=MessageAction(label="今日", text="今日"))
+    #         items = [today_btn, date_picker, cancel_button]
             
-            # 確認メッセージに共有/個人を表示
-            shared_str = "👪 共有用" if is_shared == 1 else "👤 個人用"
-            line_bot_api.reply_message(
-                event.reply_token, 
-                TextSendMessage(text=f"{prefix}{shared_str} / 金額: {state['amount']:,}円\n\nいつの記録ですか？", quick_reply=QuickReply(items=items))
-            )
-            return
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：金額は「数字のみ」または「共(空白)数字」で入力してください。"))
-            return
+    #         # 確認メッセージに共有/個人を表示
+    #         shared_str = "👪 共有用" if is_shared == 1 else "👤 個人用"
+    #         line_bot_api.reply_message(
+    #             event.reply_token, 
+    #             TextSendMessage(text=f"{prefix}{shared_str} / 金額: {state['amount']:,}円\n\nいつの記録ですか？", quick_reply=QuickReply(items=items))
+    #         )
+    #         return
+    #     else:
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}エラー：金額は「数字のみ」または「共(空白)数字」で入力してください。"))
+    #         return
 
-    elif state["step"] == 3:
-        if text == "今日":
-            state["date"] = date.today().strftime("%Y-%m-%d")
-            state["step"] = 4
-            items = [confirm_button, cancel_button]
-            line_bot_api.reply_message(
-                event.reply_token, 
-                TextSendMessage(text=f"{prefix}日付: {state['date']}\n\nよろしければ「確定」を、備考を加える場合はテキストを入力してください。", quick_reply=QuickReply(items=items))
-            )
-            return
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}下部のボタンから日付を選択してください。"))
-            return
+    # elif state["step"] == 3:
+    #     if text == "今日":
+    #         state["date"] = date.today().strftime("%Y-%m-%d")
+    #         state["step"] = 4
+    #         items = [confirm_button, cancel_button]
+    #         line_bot_api.reply_message(
+    #             event.reply_token, 
+    #             TextSendMessage(text=f"{prefix}日付: {state['date']}\n\nよろしければ「確定」を、備考を加える場合はテキストを入力してください。", quick_reply=QuickReply(items=items))
+    #         )
+    #         return
+    #     else:
+    #         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"{prefix}下部のボタンから日付を選択してください。"))
+    #         return
 
-    elif state["step"] == 4:
-        memo = "" if text == "確定" else text
-        is_shared = state.get("is_shared", 0) # 💡 ステートからフラグを取得（収入の時はデフォルト0になるので安全）
+    # elif state["step"] == 4:
+    #     memo = "" if text == "確定" else text
+    #     is_shared = state.get("is_shared", 0) # 💡 ステートからフラグを取得（収入の時はデフォルト0になるので安全）
 
-        # 💡 引数に is_shared を追加
-        success, detail = db.insert_transaction(
-            state["mode"], current_name, user_id, state["category"], state["amount"], memo, tx_date=state["date"], is_shared=is_shared
-        )
-        if success:
-            shared_str = "👪 共有用" if is_shared == 1 else "👤 個人用"
-            reply_text = f"【登録完了】\n区分: {shared_str}\n日付: {state['date']}\n項目: {state['category']}\n金額: {state['amount']:,}円\n備考: {memo}"
-        else:
-            reply_text = f"データベース登録中にエラーが発生しました。最初からやり直してください。\n原因: {detail}"
+    #     # 💡 引数に is_shared を追加
+    #     success, detail = db.insert_transaction(
+    #         state["mode"], current_name, user_id, state["category"], state["amount"], memo, tx_date=state["date"], is_shared=is_shared
+    #     )
+    #     if success:
+    #         shared_str = "👪 共有用" if is_shared == 1 else "👤 個人用"
+    #         reply_text = f"【登録完了】\n区分: {shared_str}\n日付: {state['date']}\n項目: {state['category']}\n金額: {state['amount']:,}円\n備考: {memo}"
+    #     else:
+    #         reply_text = f"データベース登録中にエラーが発生しました。最初からやり直してください。\n原因: {detail}"
             
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        user_states.pop(user_id, None)
-        return
+    #     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+    #     user_states.pop(user_id, None)
+    #     return
 
 @handler.add(PostbackEvent)
 def handle_postback(event):
@@ -292,7 +306,7 @@ def index():
     return 'Render is awake!'
 
 # =========================================================================
-# 🌐 LIFF 画面用ルーティング＆API
+# LIFF 画面用ルーティング＆API
 # =========================================================================
 
 # 1. LIFF 画面本体（HTML）の返却
@@ -340,8 +354,9 @@ def api_add_transaction():
 @app.route('/api/recent', methods=['GET'])
 def api_get_recent():
     user_id = request.args.get('user_id')
-    transactions = db.get_recent_transactions(user_id, limit=5)
-    # transactions: [(type, id, date, cat, amount), ...]
+    # 💡 5件制限を外し、LIFF用の新しい関数を呼び出す
+    transactions = db.get_liff_transactions(user_id, limit=100)
+    
     res = []
     for tx in transactions:
         res.append({
@@ -349,7 +364,8 @@ def api_get_recent():
             "id": tx[1],
             "date": tx[2],
             "category": tx[3],
-            "amount": tx[4]
+            "amount": tx[4],
+            "is_shared": tx[5]  # 💡 共有/個人フラグを追加
         })
     return jsonify({"status": "success", "transactions": res})
 
