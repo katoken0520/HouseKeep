@@ -221,8 +221,10 @@ class DBManager:
                     JOIN {cat_table} c ON e.category_id = c.category_id
                     WHERE c.category_name = %s
                 """, (category_name,))
-                return cursor.fetchone()[0]
-        except:
+                row = cursor.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            print(f"check_category_usage error: {e}")
             return 0
         finally:
             conn.close()
