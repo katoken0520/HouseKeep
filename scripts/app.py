@@ -25,6 +25,7 @@ db = DBManager()
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if GEMINI_API_KEY:
+    print(f"DEBUG: GEMINI_API_KEY length is {len(GEMINI_API_KEY)}")
     genai.configure(api_key=GEMINI_API_KEY)
     
     # DBから現在有効なカテゴリー一覧をあらかじめ取得してシステムプロンプトに埋め込む
@@ -64,7 +65,7 @@ if GEMINI_API_KEY:
     # モデル作成時に指示文を渡す
     model = genai.GenerativeModel(
         model_name='gemini-1.5-flash',
-        # system_instruction=system_prompt
+        system_instruction=system_prompt
     )
 
 # =========================================================================
@@ -168,7 +169,6 @@ def handle_message(event):
     active_inc_cats = db.get_categories('income_categories', only_active=True)
     
     prompt = f"""
-    【実際の入力】
     【text】
     {text}
     【active_category】
@@ -178,7 +178,7 @@ def handle_message(event):
     """
 
     try:
-        response = model.generate_content(system_prompt + prompt)
+        response = model.generate_content(prompt)
         json_text = response.text.strip()
         ai_data = json.loads(json_text)
 
