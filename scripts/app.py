@@ -8,6 +8,7 @@ from linebot.models import (
     QuickReply, QuickReplyButton, MessageAction,
     PostbackAction, PostbackEvent, DatetimePickerAction
 )
+from flask import Flask, abort, request, render_template, jsonify
 from db_manager import DBManager
 from dotenv import load_dotenv
 
@@ -289,8 +290,6 @@ def handle_postback(event):
 @app.route('/')
 def index():
     return 'Render is awake!'
-
-from flask import render_template, jsonify # render_template と jsonify を追加インポート
 
 # =========================================================================
 # 🌐 LIFF 画面用ルーティング＆API
