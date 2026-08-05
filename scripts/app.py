@@ -104,10 +104,11 @@ def handle_message(event):
     INCOME: ["給与", "手当", "その他"]
     EXPENSE: ["食費", "日用品", "交際費", "その他"]
     ---- today ----
-    2026-08-06
+    2026-04-02
 
     【出力JSON例】
-    {{"type": "EXPENSE", "category": "食費", "amount": 1000, "is_shared": 1, "memo": "", "date": "2026-08-05"}}
+    {{"type": "EXPENSE", "category": "食費", "amount": 1000, "is_shared": 1, "memo": "", "date": "2026-04-01"}}
+    「スーパーで」と言っているので支出、食費となり、「共有」と言っているのでis_sharedは1になる。また、「昨日」と言っているので4月2日の1日前、つまり4月1日となる。
     """
 
     try:
@@ -122,6 +123,7 @@ def handle_message(event):
         ---- today ----
         {date.today().strftime("%Y-%m-%d")}
         """
+        print(f"Prompt: {prompt}")
         response = client.models.generate_content(model='gemini-3.5-flash',   # これよりバージョンを落とすとどうやら動かない。
                                                   contents=prompt, # ユーザーの入力テキスト
                                                   config=types.GenerateContentConfig(system_instruction=system_prompt))
