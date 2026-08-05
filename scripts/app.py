@@ -64,7 +64,7 @@ if GEMINI_API_KEY:
     # モデル作成時に指示文を渡す
     model = genai.GenerativeModel(
         model_name='gemini-2.5-flash',
-        system_instruction=system_prompt
+        # system_instruction=system_prompt
     )
 
 # =========================================================================
@@ -168,6 +168,7 @@ def handle_message(event):
     active_inc_cats = db.get_categories('income_categories', only_active=True)
     
     prompt = f"""
+    【実際の入力】
     【text】
     {text}
     【active_category】
@@ -177,7 +178,7 @@ def handle_message(event):
     """
 
     try:
-        response = model.generate_content(text)
+        response = model.generate_content(system_prompt + prompt)
         json_text = response.text.strip()
         ai_data = json.loads(json_text)
 
