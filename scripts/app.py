@@ -103,7 +103,7 @@ def handle_message(event):
     try:
         # 💡 新しいライブラリを使ったクリーンな呼び出し
         response = client.models.generate_content(
-            model='models/gemini-2.5-flash',
+            model='gemini-3.5-flash',
             contents=text, # ユーザーの入力テキスト
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt, # システムプロンプトを分離して指定
