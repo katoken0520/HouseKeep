@@ -5,7 +5,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage, MessageAction, QuickReplyButton, QuickReply
 from db_manager import DBManager
-import google.genai as genai
+import google.generativeai as genai
 import json
 from dotenv import load_dotenv
 load_dotenv()
