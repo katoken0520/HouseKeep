@@ -1,13 +1,17 @@
 import os
+import json
 from datetime import date
 from flask import Flask, abort, request, render_template, jsonify
 from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage, MessageAction, QuickReplyButton, QuickReply
+from linebot.models import MessageEvent, TextMessage, TextSendMessage, QuickReply, QuickReplyButton, MessageAction
 from db_manager import DBManager
-import google.generativeai as genai
-import json
 from dotenv import load_dotenv
+
+# 💡 新しい公式ライブラリをインポート
+from google import genai
+from google.genai import types
+
 load_dotenv()
 
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get('LINE_CHANNEL_ACCESS_TOKEN')
@@ -18,63 +22,134 @@ ADMIN_APP_URL = os.environ.get('ADMIN_APP_URL')
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
-user_states = {}
-
 app = Flask(__name__)
 db = DBManager()
+user_states = {}
 
+# 💡 新しい公式ライブラリでの初期化
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+client = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    client = genai.Client(api_key=GEMINI_API_KEY)
 
-    print("=== 🟢 使用可能なAIモデル一覧 🟢 ===")
-    try:
-        for m in genai.list_models():
-            if 'generateContent' in m.supported_generation_methods:
-                print(m.name)
-    except Exception as e:
-        print(f"モデル一覧取得エラー: {e}")
-    print("====================================")
-    
-    # DBから現在有効なカテゴリー一覧をあらかじめ取得してシステムプロンプトに埋め込む
+# =========================================================================
+# 💬 LINE テキストメッセージの処理
+# =========================================================================
+@handler.add(MessageEvent, message=TextMessage)
+def handle_message(event):
+    text = event.message.text.strip()
+    user_id = event.source.user_id
+    profile = line_bot_api.get_profile(user_id)
+    current_name = profile.display_name
+
+    if not check_user_registration(user_id, current_name, event, text_message=text):
+        return
+
+    if text == "管理者サイトのURLを表示":
+        reply_text = f"💻 管理者用システムはこちらです👇\n{ADMIN_APP_URL}\n\n※ログインにはパスワードが必要です。"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return
+        
+    elif text == "確定":
+        state = user_states.pop(user_id, None)
+        if state and state.get("status") == "pending_ai":
+            ai_data = state["data"]
+            success, detail = db.insert_transaction(
+                ai_data['type'], 
+                current_name, 
+                user_id, 
+                ai_data['category'], 
+                ai_data['amount'], 
+                ai_data['memo'], 
+                tx_date=date.today().strftime("%Y-%m-%d"), 
+                is_shared=ai_data['is_shared']
+            )
+            if success:
+                reply_text = "🎯 データベースに正常に記録しました！"
+            else:
+                reply_text = f"❌ データの保存に失敗しました。\n{detail}"
+        else:
+            reply_text = "確認待ちのデータがありません。メニューからフォームを開いて入力してください📱"
+            
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return
+
+    elif text == "キャンセル":
+        user_states.pop(user_id, None)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="登録をキャンセルしました。"))
+        return
+
+    if not client:
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="AIの初期設定が完了していません。"))
+        return
+
+    # 💡 抽出ルールの作成
     active_exp_cats = db.get_categories('expense_categories', only_active=True)
-    
-    # 🌟 ここに概要やルールをすべて詰め込みます
     system_prompt = f"""
-    あなたは家計簿アシスタントです。
-    ユーザーの入力テキストから毎度、家計簿項目を推測して指定のJSONフォーマットのみを出力してください。
-    余計な文章や解説、```json などのマークダウン装飾は一切不要です。
-    必ず純粋なJSON文字列だけを返してください。
-    
-    ただし、ユーザーの入力テキストが明らかに家計簿への記帳ではない場合は、以下のJSONフォーマットのみを出力してください。
-    {{"type": "", "category": "", "amount": 0, "is_shared": 0, "memo": ""}}
+    あなたは優秀な家計簿アシスタントです。ユーザーの入力テキストから家計簿データを抽出し、以下のJSONフォーマットのみを出力してください。余計な文章や装飾は一切不要です。
 
     【抽出ルール】
     - type: 支出なら "EXPENSE"、収入なら "INCOME"
-    - category: 有効な項目のリストが収入、支出それぞれに対し与えられるので、その中から最も適する物を一つ選び、valueは文字列とする。このカテゴリーは毎回変わる可能性がある。
-      （例: INCOME: ["給与", "配当・利子", "その他"], EXPENSE: ["食費", "日用品", "その他"])
+    - category: 以下のリストから最も意味が近いものを1つ選ぶこと。
+      {active_exp_cats}
     - amount: 金額を数値（整数）のみで抽出。
-    - is_shared: ユーザーが家族であることを想定して、共有の支払いとすべきなら 1、個人の支払いなら 0とする。スーパーでの買い物などが共有の代表例である。曖昧ならば 0とする。
-    - memo: 日常的な買いもであれば空文字 ""とする。特殊ケースと思われる場合はここに備考として日本語の文字列を定める。
-    - date: 日付を文字列で書く。分からない場合は入力されたtodayと同じものを出力とする。（例: 2026-08-06）
+    - is_shared: 共有の支払い（「共」「共有」「二人で」など）なら 1、個人の支払いなら 0。指定がなければ 0。
+    - memo: 買った場所、決済方法、品物など。なければ空文字 ""。
 
-    【入力例】
-    【text】
-    昨日、旅行先でご飯、2000円
-    【active_category】
-    INCOME: ["給与", "配当・利子", "その他"], EXPENSE: ["食費", "日用品", "その他"]
-    【today】
-    2026-08-06
-
-    【出力例】
-    {{"type": "EXPENSE", "category": "食費", "amount": 2000, "is_shared": 1, "memo": "旅行先での食事", "date": "2026-08-05"}}
+    【出力JSON例】
+    {{"type": "EXPENSE", "category": "食費", "amount": 600, "is_shared": 0, "memo": "コンビニ弁当"}}
     """
-    
-    # モデル作成時に指示文を渡す
-    model = genai.GenerativeModel(
-        model_name="models/gemini-2.5-flash"
-        # system_instruction=system_prompt
-    )
+
+    try:
+        # 💡 新しいライブラリを使ったクリーンな呼び出し
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=text, # ユーザーの入力テキスト
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt, # システムプロンプトを分離して指定
+            )
+        )
+        
+        json_text = response.text.strip().replace('```json', '').replace('```', '')
+        ai_data = json.loads(json_text)
+        
+        user_states[user_id] = {
+            "status": "pending_ai",
+            "data": ai_data
+        }
+        
+        tx_label = "支出" if ai_data['type'] == 'EXPENSE' else "収入"
+        shared_str = "👪 共有用" if ai_data['is_shared'] == 1 else "👤 個人用"
+        
+        confirm_text = (
+            f"🤖 AI解析結果:\n"
+            f"----------------------\n"
+            f"種別: {tx_label}\n"
+            f"区分: {shared_str}\n"
+            f"項目: {ai_data['category']}\n"
+            f"金額: {ai_data['amount']:,}円\n"
+            f"備考: {ai_data['memo'] if ai_data['memo'] else 'なし'}\n"
+            f"----------------------\n"
+            f"この内容で登録しますか？"
+        )
+        
+        quick_reply_items = [
+            QuickReplyButton(action=MessageAction(label="✅ 確定", text="確定")),
+            QuickReplyButton(action=MessageAction(label="❌ キャンセル", text="キャンセル"))
+        ]
+        
+        line_bot_api.reply_message(
+            event.reply_token, 
+            TextSendMessage(text=confirm_text, quick_reply=QuickReply(items=quick_reply_items))
+        )
+
+    except Exception as e:
+        print(f"AI Parsing Error: {e}")
+        user_states.pop(user_id, None)
+        line_bot_api.reply_message(
+            event.reply_token, 
+            TextSendMessage(text="うまく読み取れませんでした💦\n下部のメニューから「入力フォーム」を開いて手動で登録してください📱")
+        )
 
 # =========================================================================
 # 🌟 Render起床用 (cron-job.org) & LINE Webhook
@@ -186,13 +261,10 @@ def handle_message(event):
     """
 
     try:
-        print("aaaaaaaaaaaaaaaaa")
+        print(prompt)
         response = model.generate_content(prompt)
-        print("bbbbbbbbbbbbbbb")
         json_text = response.text.strip()
-        print("cccccccccccccccc")
         ai_data = json.loads(json_text)
-        print("ddddddddddddd")
         if ai_data['type'] == "":
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"AIがあなたのメッセージから収支項目を判断します！（1日1500回まで）\n「昨日、スーパーで1000円」などと送信してみてください！"))
             return
