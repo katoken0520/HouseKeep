@@ -25,8 +25,16 @@ db = DBManager()
 
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if GEMINI_API_KEY:
-    print(f"DEBUG: GEMINI_API_KEY length is {len(GEMINI_API_KEY)}")
     genai.configure(api_key=GEMINI_API_KEY)
+
+    print("=== 🟢 使用可能なAIモデル一覧 🟢 ===")
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                print(m.name)
+    except Exception as e:
+        print(f"モデル一覧取得エラー: {e}")
+    print("====================================")
     
     # DBから現在有効なカテゴリー一覧をあらかじめ取得してシステムプロンプトに埋め込む
     active_exp_cats = db.get_categories('expense_categories', only_active=True)
