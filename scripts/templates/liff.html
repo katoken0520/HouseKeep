@@ -11,9 +11,9 @@
     body { background-color: #f8f9fa; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
     .nav-pills .nav-link.active { background-color: #0b2545; }
     .btn-primary { background-color: #0b2545; border-color: #0b2545; }
-    /* 💡 スマホで滑らかにスクロールさせる設定 */
     .scrollable-list { max-height: 60vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
     .chart-container { position: relative; height: 250px; width: 100%; margin-bottom: 20px; }
+    .help-btn { width: 32px; height: 32px; padding: 0; line-height: 1; border-color: #ced4da; color: #6c757d; }
   </style>
 </head>
 <body class="p-3">
@@ -24,6 +24,12 @@
   </div>
 
   <div id="main-content" style="display: none;">
+    
+    <div class="d-flex justify-content-between align-items-center mb-3 px-1">
+      <h5 class="fw-bold mb-0" style="color: #0b2545;">入力フォーム</h5>
+      <button class="btn btn-outline-secondary rounded-circle fw-bold help-btn" data-bs-toggle="modal" data-bs-target="#helpModal">?</button>
+    </div>
+
     <ul class="nav nav-pills nav-fill mb-3" id="pills-tab" role="tablist">
       <li class="nav-item"><button class="nav-link active" id="tab-exp" data-bs-toggle="pill" data-bs-target="#content-exp">💸 支出</button></li>
       <li class="nav-item"><button class="nav-link" id="tab-inc" data-bs-toggle="pill" data-bs-target="#content-inc">💰 収入</button></li>
@@ -103,7 +109,6 @@
           <div class="chart-container">
             <canvas id="categoryPieChart"></canvas>
           </div>
-          
           <hr>
           
           <h6 class="mt-3">👪 共有会計の負担状況</h6>
@@ -117,11 +122,33 @@
     </div>
   </div>
 
+  <div class="modal fade" id="helpModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h6 class="modal-title fw-bold">📖 使い方ガイド</h6>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body small">
+          <p class="fw-bold mb-1">✅ 基本的な使い方</p>
+          <p class="text-muted mb-3">金額や項目を入力して「登録」を押してください。「履歴」タブから直近のデータを削除・確認できます。</p>
+          
+          <p class="fw-bold mb-1">👪 共有用・個人用の違い</p>
+          <p class="text-muted mb-3">「共有用」で登録したデータは、全体の共有支出として別枠で集計され、「概要」タブのグラフで負担割合を確認できます。</p>
+
+          <p class="fw-bold mb-1">⚡ メッセージでの最速入力</p>
+          <p class="text-muted mb-0">この画面を開かなくても、LINEのトーク画面で <code>[区分] [項目] [金額]</code> とスペースを空けて送るだけで即座に登録が可能です。<br>例：<code>共 食費 500</code> または <code>個 交通費 1200</code></p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  
   <script>
-    const LIFF_ID = "2010989817-SOF5ZiXe"; // ⚠️ ご自身のLIFF IDに書き換えてください！
+    const LIFF_ID = "YOUR_LIFF_ID"; // ⚠️ ご自身のLIFF IDに書き換えてください
     let userId = "";
     
-    // グラフオブジェクトを保持する変数（再描画時のチラつき防止用）
     let pieChartInstance = null;
     let barChartInstance = null;
 
@@ -177,7 +204,6 @@
       });
     }
 
-    // 💡 履歴読み込み（スクロールリスト生成）
     function loadRecent() {
       fetch(`/api/recent?user_id=${userId}`)
         .then(res => res.json())
@@ -217,18 +243,16 @@
       });
     }
 
-    // 💡 グラフ描画を含むサマリー読み込み
     function loadSummary() {
       fetch(`/api/summary?user_id=${userId}`)
         .then(res => res.json())
         .then(data => {
           document.getElementById('sum-total').innerText = data.total_amount.toLocaleString() + " 円";
           
-          // --- 1. 項目別 円グラフ ---
           const catNames = data.categories.map(c => c.name);
           const catAmounts = data.categories.map(c => c.amount);
           
-          if(pieChartInstance) pieChartInstance.destroy(); // 古いグラフを破棄
+          if(pieChartInstance) pieChartInstance.destroy();
           const ctxPie = document.getElementById('categoryPieChart').getContext('2d');
           pieChartInstance = new Chart(ctxPie, {
             type: 'doughnut',
@@ -242,7 +266,6 @@
             options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
           });
 
-          // --- 2. 共有会計 横棒グラフ ---
           const totalShared = data.total_shared || 0;
           const userShared = data.user_shared || 0;
           const otherShared = totalShared - userShared;
@@ -265,7 +288,7 @@
               options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                indexAxis: 'y', // 横棒グラフにする
+                indexAxis: 'y',
                 scales: {
                   x: { stacked: true, max: totalShared, display: false },
                   y: { stacked: true, display: false }
