@@ -311,6 +311,82 @@ class DBManager:
         finally:
             conn.close()
 
+    def get_monthly_report_stats(self, line_user_id):
+        """月次レポート用の集計データ（先月の総額、過去平均、トップ3項目）を取得する"""
+        conn = self._connect()
+        try:
+            with conn.cursor() as cursor:
+                # 1. 先月の総支出
+                cursor.execute("""
+                    SELECT COALESCE(SUM(amount), 0) FROM expenses e 
+                    JOIN members m ON e.member_id = m.member_id
+                    WHERE m.line_user_id = %s
+                    AND date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+                    AND date < date_trunc('month', CURRENT_DATE)
+                """, (line_user_id,))
+                last_month_total = int(cursor.fetchone()[0] or 0)
+                
+                # 先月の記録がない場合はNoneを返す
+                if last_month_total == 0:
+                    return None
+                
+                # 2. 過去の平均総支出（先月より前の全期間の月平均）
+                cursor.execute("""
+                    SELECT COALESCE(AVG(monthly_total), 0) FROM (
+                        SELECT date_trunc('month', date) as month, SUM(amount) as monthly_total
+                        FROM expenses e
+                        JOIN members m ON e.member_id = m.member_id
+                        WHERE m.line_user_id = %s
+                        AND date < date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+                        GROUP BY date_trunc('month', date)
+                    ) sub
+                """, (line_user_id,))
+                past_avg_total = int(cursor.fetchone()[0] or 0)
+                
+                # 3. 先月の支出が多いカテゴリートップ3
+                cursor.execute("""
+                    SELECT c.category_id, c.category_name, SUM(e.amount) as cat_total
+                    FROM expenses e
+                    JOIN expense_categories c ON e.category_id = c.category_id
+                    JOIN members m ON e.member_id = m.member_id
+                    WHERE m.line_user_id = %s
+                    AND e.date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+                    AND e.date < date_trunc('month', CURRENT_DATE)
+                    GROUP BY c.category_id, c.category_name
+                    ORDER BY cat_total DESC
+                    LIMIT 3
+                """, (line_user_id,))
+                top_categories_raw = cursor.fetchall()
+                
+                top_categories = []
+                for cat_id, cat_name, cat_total in top_categories_raw:
+                    # 該当カテゴリーの過去平均
+                    cursor.execute("""
+                        SELECT COALESCE(AVG(monthly_total), 0) FROM (
+                            SELECT date_trunc('month', date) as month, SUM(amount) as monthly_total
+                            FROM expenses e
+                            JOIN members m ON e.member_id = m.member_id
+                            WHERE m.line_user_id = %s AND e.category_id = %s
+                            AND date < date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+                            GROUP BY date_trunc('month', date)
+                        ) sub
+                    """, (line_user_id, cat_id))
+                    cat_past_avg = int(cursor.fetchone()[0] or 0)
+                    
+                    top_categories.append({
+                        "name": cat_name,
+                        "amount": int(cat_total),
+                        "past_avg": cat_past_avg
+                    })
+                    
+                return {
+                    "last_month_total": last_month_total,
+                    "past_avg_total": past_avg_total,
+                    "top_categories": top_categories
+                }
+        finally:
+            conn.close()
+
     def delete_transaction(self, tx_type, tx_id):
         if tx_type not in ['EXPENSE', 'INCOME']:
             return False, "無効なタイプです"
