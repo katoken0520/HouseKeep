@@ -12,8 +12,14 @@
     .nav-pills .nav-link.active { background-color: #0b2545; }
     .btn-primary { background-color: #0b2545; border-color: #0b2545; }
     .scrollable-list { max-height: 60vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-    .chart-container { position: relative; height: 250px; width: 100%; margin-bottom: 20px; }
+    .chart-container { position: relative; height: 220px; width: 100%; margin-bottom: 15px; }
     .help-btn { width: 32px; height: 32px; padding: 0; line-height: 1; border-color: #ced4da; color: #6c757d; }
+    
+    /* 💡 プレースホルダーの文字色を少し薄く設定 */
+    ::placeholder {
+      color: #adb5bd !important;
+      opacity: 0.6 !important;
+    }
   </style>
 </head>
 <body class="p-3">
@@ -56,7 +62,7 @@
           </div>
           <div class="mb-3">
             <label class="form-label">金額 (円)</label>
-            <input type="number" id="exp-amount" class="form-control form-control-lg" placeholder="1000" inputmode="numeric">
+            <input type="number" id="exp-amount" class="form-control" inputmode="numeric">
           </div>
           <div class="mb-3">
             <label class="form-label">日付</label>
@@ -78,7 +84,7 @@
           </div>
           <div class="mb-3">
             <label class="form-label">金額 (円)</label>
-            <input type="number" id="inc-amount" class="form-control form-control-lg" placeholder="50000" inputmode="numeric">
+            <input type="number" id="inc-amount" class="form-control" inputmode="numeric">
           </div>
           <div class="mb-3">
             <label class="form-label">日付</label>
@@ -86,7 +92,7 @@
           </div>
           <div class="mb-3">
             <label class="form-label">備考</label>
-            <input type="text" id="inc-memo" class="form-control">
+            <input type="text" id="inc-memo" class="form-control" placeholder="メモ（任意）">
           </div>
           <button class="btn btn-success btn-lg w-100" onclick="submitTransaction('INCOME')">収入を登録する</button>
         </div>
@@ -94,7 +100,7 @@
 
       <div class="tab-pane fade" id="content-rec">
         <div class="card p-2 shadow-sm">
-          <h6 class="px-2 pt-2">過去の入力履歴</h6>
+          <h6 class="px-2 pt-2 fw-bold">過去の入力履歴</h6>
           <div class="scrollable-list">
             <ul id="recent-list" class="list-group list-group-flush"></ul>
           </div>
@@ -103,17 +109,23 @@
 
       <div class="tab-pane fade" id="content-sum">
         <div class="card p-3 shadow-sm">
-          <h6 class="text-center">過去30日間の総支出</h6>
-          <h2 id="sum-total" class="text-center text-primary fw-bold mb-4">0 円</h2>
+          <h6 class="text-center text-muted small">過去30日間の総支出</h6>
+          <h2 id="sum-total" class="text-center text-primary fw-bold mb-3">0 円</h2>
           
           <div class="chart-container">
             <canvas id="categoryPieChart"></canvas>
           </div>
+          
+          <div class="mb-3">
+            <h6 class="fw-bold small text-muted mb-2">📂 項目別内訳</h6>
+            <ul id="sum-category-list" class="list-group list-group-flush small"></ul>
+          </div>
+
           <hr>
           
-          <h6 class="mt-3">👪 共有会計の負担状況</h6>
-          <div id="sum-shared-text" class="text-center mb-2 small text-muted"></div>
-          <div style="height: 100px; width: 100%;">
+          <h6 class="mt-2 fw-bold small text-muted">👪 共有会計の負担状況</h6>
+          <div id="sum-shared-text" class="text-center mb-2 small"></div>
+          <div style="height: 80px; width: 100%;">
             <canvas id="sharedBarChart"></canvas>
           </div>
         </div>
@@ -135,9 +147,6 @@
           
           <p class="fw-bold mb-1">👪 共有用・個人用の違い</p>
           <p class="text-muted mb-3">「共有用」で登録したデータは、全体の共有支出として別枠で集計され、「概要」タブのグラフで負担割合を確認できます。</p>
-
-          <p class="fw-bold mb-1">⚡ メッセージでの最速入力</p>
-          <p class="text-muted mb-0">この画面を開かなくても、LINEのトーク画面で <code>[区分] [項目] [金額]</code> とスペースを空けて送るだけで即座に登録が可能です。<br>例：<code>共 食費 500</code> または <code>個 交通費 1200</code></p>
         </div>
       </div>
     </div>
@@ -180,12 +189,15 @@
       });
     }
 
+    // 💡 登録処理（LIFFを閉じずに入力項目を初期化するように変更）
     function submitTransaction(type) {
       const isExp = type === 'EXPENSE';
-      const amount = document.getElementById(isExp ? 'exp-amount' : 'inc-amount').value;
+      const amountInput = document.getElementById(isExp ? 'exp-amount' : 'inc-amount');
+      const memoInput = document.getElementById(isExp ? 'exp-memo' : 'inc-memo');
+      const amount = amountInput.value;
       const category = document.getElementById(isExp ? 'exp-category' : 'inc-category').value;
       const date = document.getElementById(isExp ? 'exp-date' : 'inc-date').value;
-      const memo = document.getElementById(isExp ? 'exp-memo' : 'inc-memo').value;
+      const memo = memoInput.value;
       const isShared = isExp ? document.querySelector('input[name="exp-shared"]:checked').value : 0;
 
       if (!amount || amount <= 0) return alert("金額を入力してください。");
@@ -197,7 +209,9 @@
       }).then(res => res.json()).then(data => {
         if (data.status === 'success') {
           alert("登録しました！");
-          liff.closeWindow();
+          // 金額と備考をクリアして次の入力に備える
+          amountInput.value = "";
+          memoInput.value = "";
         } else {
           alert("エラー: " + data.message);
         }
@@ -215,7 +229,7 @@
             const sharedBadge = (isExp && tx.is_shared === 1) ? '<span class="badge bg-primary rounded-pill">👪 共有</span>' : '<span class="badge bg-secondary rounded-pill">👤 個人</span>';
             
             return `
-            <li class="list-group-item d-flex justify-content-between align-items-center py-2">
+            <li class="list-group-item d-flex justify-content-between align-items-center py-2 px-1">
               <div style="flex-grow: 1;">
                 <div class="d-flex justify-content-between mb-1">
                   <small class="text-muted">${tx.date}</small>
@@ -225,7 +239,7 @@
                   ${typeBadge} <strong>${tx.category}</strong>: ${tx.amount.toLocaleString()}円
                 </div>
               </div>
-              <button class="btn btn-sm btn-outline-danger ms-3" onclick="deleteTx('${tx.type}', ${tx.id})">削除</button>
+              <button class="btn btn-sm btn-outline-danger ms-2" onclick="deleteTx('${tx.type}', ${tx.id})">削除</button>
             </li>
             `;
           }).join('');
@@ -247,11 +261,23 @@
       fetch(`/api/summary?user_id=${userId}`)
         .then(res => res.json())
         .then(data => {
-          document.getElementById('sum-total').innerText = data.total_amount.toLocaleString() + " 円";
+          const totalAmount = data.total_amount || 0;
+          document.getElementById('sum-total').innerText = totalAmount.toLocaleString() + " 円";
           
           const catNames = data.categories.map(c => c.name);
           const catAmounts = data.categories.map(c => c.amount);
           
+          const catListHtml = data.categories.map(c => {
+            const pct = totalAmount > 0 ? ((c.amount / totalAmount) * 100).toFixed(1) : "0.0";
+            return `
+              <li class="list-group-item d-flex justify-content-between align-items-center py-1 px-1">
+                <span>${c.name}</span>
+                <span><strong>${c.amount.toLocaleString()} 円</strong> <small class="text-muted">(${pct}%)</small></span>
+              </li>
+            `;
+          }).join('');
+          document.getElementById('sum-category-list').innerHTML = catListHtml || '<li class="list-group-item text-muted text-center py-2">データがありません</li>';
+
           if(pieChartInstance) pieChartInstance.destroy();
           const ctxPie = document.getElementById('categoryPieChart').getContext('2d');
           pieChartInstance = new Chart(ctxPie, {
@@ -263,14 +289,53 @@
                 backgroundColor: ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#C9CBCF', '#7BC225']
               }]
             },
-            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right' } } }
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              plugins: {
+                legend: {
+                  position: 'right',
+                  labels: {
+                    boxWidth: 12,
+                    font: { size: 11 },
+                    generateLabels: function(chart) {
+                      const data = chart.data;
+                      if (data.labels.length && data.datasets.length) {
+                        const total = data.datasets[0].data.reduce((a, b) => a + b, 0);
+                        return data.labels.map((label, i) => {
+                          const value = data.datasets[0].data[i];
+                          const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                          return {
+                            text: `${label} (${percentage}%)`,
+                            fillStyle: data.datasets[0].backgroundColor[i],
+                            hidden: isNaN(data.datasets[0].data[i]) || chart.getDatasetMeta(0).data[i].hidden,
+                            index: i
+                          };
+                        });
+                      }
+                      return [];
+                    }
+                  }
+                },
+                tooltip: {
+                  callbacks: {
+                    label: function(context) {
+                      const value = context.raw || 0;
+                      const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                      const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                      return ` ${context.label}: ${value.toLocaleString()}円 (${percentage}%)`;
+                    }
+                  }
+                }
+              }
+            }
           });
 
           const totalShared = data.total_shared || 0;
           const userShared = data.user_shared || 0;
           const otherShared = totalShared - userShared;
           
-          document.getElementById('sum-shared-text').innerHTML = `全体: <strong>${totalShared.toLocaleString()}円</strong> / あなた: <strong>${userShared.toLocaleString()}円</strong>`;
+          document.getElementById('sum-shared-text').innerHTML = `あなた: <strong>${userShared.toLocaleString()}円</strong> / 全体: <strong>${totalShared.toLocaleString()}円</strong>`;
 
           if(barChartInstance) barChartInstance.destroy();
           const ctxBar = document.getElementById('sharedBarChart').getContext('2d');
