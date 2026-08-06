@@ -176,12 +176,22 @@
     });
 
     function loadCategories() {
-      fetch('/api/categories?type=expense_categories').then(res => res.json()).then(data => {
-        document.getElementById('exp-category').innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
-      });
-      fetch('/api/categories?type=income_categories').then(res => res.json()).then(data => {
-        document.getElementById('inc-category').innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
-      });
+      fetch(`/api/categories?type=expense_categories&user_id=${userId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'error') {
+            alert(data.message);
+            return;
+          }
+          document.getElementById('exp-category').innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+        });
+
+      fetch(`/api/categories?type=income_categories&user_id=${userId}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.status === 'error') return;
+          document.getElementById('inc-category').innerHTML = data.categories.map(c => `<option value="${c}">${c}</option>`).join('');
+        });
     }
 
     function submitTransaction(type) {
@@ -244,9 +254,13 @@
       fetch('/api/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: type, id: id })
+        body: JSON.stringify({ user_id: userId, type: type, id: id }) // 💡 user_id を追加
       }).then(res => res.json()).then(data => {
-        if (data.status === 'success') loadRecent();
+        if (data.status === 'success') {
+          loadRecent();
+        } else {
+          alert("エラー: " + data.message);
+        }
       });
     }
 

@@ -324,13 +324,15 @@ class DBManager:
 
     def get_monthly_shared_stats(self, line_user_id):
         """過去30日間の全体の共有支出と、特定のユーザーの共有負担額を取得する"""
-        query = """
+        # 💡 日本時間の今日を基準にする
+        jst_today = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tokyo')::date"
+        query = f"""
             SELECT 
                 COALESCE(SUM(e.amount), 0) as total_shared,
                 COALESCE(SUM(CASE WHEN m.line_user_id = %s THEN e.amount ELSE 0 END), 0) as user_shared
             FROM expenses e
             JOIN members m ON e.member_id = m.member_id
-            WHERE e.is_shared = 1 AND e.date >= CURRENT_DATE - INTERVAL '30 days'
+            WHERE e.is_shared = 1 AND e.date >= {jst_today} - INTERVAL '30 days'
         """
         conn = self._connect()
         try:
@@ -343,12 +345,14 @@ class DBManager:
 
     def get_monthly_summary(self, line_user_id):
         """過去30日間の総支出額と項目別の集計を取得する"""
-        query = """
+        # 💡 日本時間の今日を基準にする
+        jst_today = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tokyo')::date"
+        query = f"""
             SELECT c.category_name, SUM(e.amount) as total
             FROM expenses e
             JOIN expense_categories c ON e.category_id = c.category_id
             JOIN members m ON e.member_id = m.member_id
-            WHERE m.line_user_id = %s AND e.date >= CURRENT_DATE - INTERVAL '30 days'
+            WHERE m.line_user_id = %s AND e.date >= {jst_today} - INTERVAL '30 days'
             GROUP BY c.category_name
             ORDER BY total DESC
         """
@@ -365,42 +369,44 @@ class DBManager:
         conn = self._connect()
         try:
             with conn.cursor() as cursor:
+                # 💡 日本時間の今日の日付を基準にするためのSQLパーツ
+                jst_today = "(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tokyo')::date"
+
                 # 1. 先月の総支出
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT COALESCE(SUM(amount), 0) FROM expenses e 
                     JOIN members m ON e.member_id = m.member_id
                     WHERE m.line_user_id = %s
-                    AND date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
-                    AND date < date_trunc('month', CURRENT_DATE)
+                    AND date >= date_trunc('month', {jst_today} - INTERVAL '1 month')
+                    AND date < date_trunc('month', {jst_today})
                 """, (line_user_id,))
                 last_month_total = int(cursor.fetchone()[0] or 0)
                 
-                # 先月の記録がない場合はNoneを返す
                 if last_month_total == 0:
                     return None
                 
                 # 2. 過去の平均総支出（先月より前の全期間の月平均）
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT COALESCE(AVG(monthly_total), 0) FROM (
                         SELECT date_trunc('month', date) as month, SUM(amount) as monthly_total
                         FROM expenses e
                         JOIN members m ON e.member_id = m.member_id
                         WHERE m.line_user_id = %s
-                        AND date < date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+                        AND date < date_trunc('month', {jst_today} - INTERVAL '1 month')
                         GROUP BY date_trunc('month', date)
                     ) sub
                 """, (line_user_id,))
                 past_avg_total = int(cursor.fetchone()[0] or 0)
                 
                 # 3. 先月の支出が多いカテゴリートップ3
-                cursor.execute("""
+                cursor.execute(f"""
                     SELECT c.category_id, c.category_name, SUM(e.amount) as cat_total
                     FROM expenses e
                     JOIN expense_categories c ON e.category_id = c.category_id
                     JOIN members m ON e.member_id = m.member_id
                     WHERE m.line_user_id = %s
-                    AND e.date >= date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
-                    AND e.date < date_trunc('month', CURRENT_DATE)
+                    AND e.date >= date_trunc('month', {jst_today} - INTERVAL '1 month')
+                    AND e.date < date_trunc('month', {jst_today})
                     GROUP BY c.category_id, c.category_name
                     ORDER BY cat_total DESC
                     LIMIT 3
@@ -410,13 +416,13 @@ class DBManager:
                 top_categories = []
                 for cat_id, cat_name, cat_total in top_categories_raw:
                     # 該当カテゴリーの過去平均
-                    cursor.execute("""
+                    cursor.execute(f"""
                         SELECT COALESCE(AVG(monthly_total), 0) FROM (
                             SELECT date_trunc('month', date) as month, SUM(amount) as monthly_total
                             FROM expenses e
                             JOIN members m ON e.member_id = m.member_id
                             WHERE m.line_user_id = %s AND e.category_id = %s
-                            AND date < date_trunc('month', CURRENT_DATE - INTERVAL '1 month')
+                            AND date < date_trunc('month', {jst_today} - INTERVAL '1 month')
                             GROUP BY date_trunc('month', date)
                         ) sub
                     """, (line_user_id, cat_id))

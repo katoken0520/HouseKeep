@@ -177,22 +177,31 @@ def callback():
     return 'OK'
 
 # 🌟 関所関数
-def check_user_registration(user_id, current_name, event, text_message=None):
-    member_id = db.get_and_sync_member(user_id, current_name)
-    if member_id:
-        return True
+def check_user_registration(user_id, current_name=None, event=None, text_message=None):
+    # 1. まずDBに登録されているか確認
+    conn = db._connect()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT member_id FROM members WHERE line_user_id = %s", (user_id,))
+            if cursor.fetchone():
+                return True # 登録済みならOK
+    finally:
+        conn.close()
 
-    if text_message and text_message == APP_PASSWORD:
-        db.register_member(user_id, current_name)
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"認証成功！🎉\n「{current_name}」さん、家計簿Botへようこそ！\nメニューからフォームを開いてください。")
-        )
-    else:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="⛔ 【未認証ユーザー】\n合言葉（パスワード）を送信してください。")
-        )
+    # 2. 未登録で、かつLINEトークからの入力（eventがある）場合のみメッセージを返す
+    if event:
+        if text_message and text_message == APP_PASSWORD:
+            db.register_member(user_id, current_name)
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text=f"認証成功！🎉\n「{current_name}」さん、家計簿Botへようこそ！\nメニューからフォームを開いてください。")
+            )
+            return True
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="⛔ 【未認証ユーザー】\n合言葉（パスワード）を送信してください。")
+            )
     return False
 
 
@@ -205,6 +214,10 @@ def liff_page():
 
 @app.route('/api/categories', methods=['GET'])
 def api_get_categories():
+    user_id = request.args.get('user_id')
+    if not check_user_registration(user_id):
+        return jsonify({"status": "error", "message": "未認証のユーザーです。合言葉をLINEで送信してください。"}), 401
+    
     tx_type = request.args.get('type', 'expense_categories')
     categories = db.get_categories(tx_type, only_active=True)
     return jsonify({"status": "success", "categories": categories})
@@ -213,6 +226,9 @@ def api_get_categories():
 def api_add_transaction():
     data = request.json
     user_id = data.get('user_id')
+    if not check_user_registration(user_id):
+        return jsonify({"status": "error", "message": "未認証のユーザーです。合言葉をLINEで送信してください。"}), 401
+    
     tx_type = data.get('type') 
     category = data.get('category')
     amount = int(data.get('amount', 0))
@@ -255,6 +271,9 @@ def api_add_transaction():
 @app.route('/api/recent', methods=['GET'])
 def api_get_recent():
     user_id = request.args.get('user_id')
+    if not check_user_registration(user_id):
+        return jsonify({"status": "error", "message": "未認証のユーザーです。"}), 401
+
     transactions = db.get_liff_transactions(user_id, limit=100)
     res = []
     for tx in transactions:
@@ -267,6 +286,10 @@ def api_get_recent():
 @app.route('/api/delete', methods=['POST'])
 def api_delete():
     data = request.json
+    user_id = data.get('user_id')
+    if not check_user_registration(user_id):
+        return jsonify({"status": "error", "message": "未認証のユーザーです。合言葉をLINEで送信してください。"}), 401
+
     tx_type = data.get('type')
     tx_id = data.get('id')
     success, detail = db.delete_transaction(tx_type, tx_id)
@@ -278,6 +301,9 @@ def api_delete():
 @app.route('/api/summary', methods=['GET'])
 def api_get_summary():
     user_id = request.args.get('user_id')
+    if not check_user_registration(user_id):
+        return jsonify({"status": "error", "message": "未認証のユーザーです。"}), 401
+
     summary = db.get_monthly_summary(user_id)
     total_shared, user_shared = db.get_monthly_shared_stats(user_id)
     
@@ -305,6 +331,9 @@ def send_monthly_report():
     
     send_count = 0
     for user_id in real_users:
+        # 💡 もし db.get_monthly_report_stats が引数で日付や基準日時を受け取れる構造になっている、
+        # あるいは db_manager.py 側で内部的に datetime.now(JST) を使うようになっていればそのままでOKです。
+        # ここでは明示的に現在の日本時間を意識させるため、必要に応じてdb_manager側も確認してください。
         stats = db.get_monthly_report_stats(user_id)
         if not stats:
             continue # 先月の記録が1件もない人はスキップ
